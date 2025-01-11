@@ -107,16 +107,11 @@ void RTOS_CreateTask(void (*taskFunction)(void))
 
     TCB_t *tcb = &g_tasks[g_numTasks];
 
-    // Clear stack with a known pattern (for debug)
     memset(tcb->stack, 0xCC, STACK_SIZE * sizeof(uint32_t));
 
-    // Calculate top-of-stack (full descending stack)
     uint32_t *stackTop = &(tcb->stack[STACK_SIZE - 1]);
-    // Align to 8 bytes
     stackTop = (uint32_t *)((uint32_t)stackTop & ~0x7UL);
 
-    // Simulate the stack frame that the CPU automatically
-    // pushes on exception entry (xPSR, PC, LR, R12, R3, R2, R1, R0)
     *(--stackTop) = 0xDEADBEEF;              // Optional scratch or alignment
     tcb->stack_bot_ptr = stackTop;           // Just for reference
     *(--stackTop) = 0x01000000;              // xPSR (Thumb bit set)
@@ -128,13 +123,11 @@ void RTOS_CreateTask(void (*taskFunction)(void))
     *(--stackTop) = 0;                       // R1
     *(--stackTop) = 0;                       // R0
 
-    // Push R4-R11 (manually done by PendSV on context switch out)
     for (int i = 0; i < 8; i++)
     {
         *(--stackTop) = 0;
     }
 
-    // Update TCB with new top
     tcb->stack_top_ptr = stackTop;
     tcb->task_fn       = taskFunction;
     tcb->task_state    = TASK_STATE_READY;
@@ -148,31 +141,24 @@ void RTOS_CreateTask(void (*taskFunction)(void))
  */
 void RTOS_Start(void)
 {
-    // Configure SysTick for TICK_FREQ_HZ
     SysTick->LOAD = (CPU_FREQ_HZ / TICK_FREQ_HZ) - 1;
-    SysTick->VAL  = 0; // clear current count
+    SysTick->VAL  = 0; 
     SysTick->CTRL = SysTick_CTRL_CLKSOURCE_Msk |
                     SysTick_CTRL_TICKINT_Msk   |
-                    SysTick_CTRL_ENABLE_Msk;   // enable SysTick
+                    SysTick_CTRL_ENABLE_Msk; 
 
-    // Set PendSV to lowest priority
+
     NVIC_SetPriority(PendSV_IRQn, 0xFF);
 
-    // Load PSP with the first task’s stack pointer
     __set_PSP((uint32_t)g_tasks[0].stack_bot_ptr);
     __ISB();
-
-    // Switch to use PSP in Thread mode
     __set_CONTROL(__get_CONTROL() | 0x02);
     __ISB();
 
-    // Enable global interrupts
     __enable_irq();
 
-    // Mark first task as running
     g_tasks[0].task_state = TASK_STATE_RUNNING;
 
-    // Jump to the first task
     __asm volatile("BX %0" : : "r" ((uint32_t)g_tasks[0].task_fn));
 }
 
@@ -188,7 +174,6 @@ void RTOS_Delay(uint32_t ms)
     g_tasks[g_currentTask].last_delay_decr = HAL_GetTick();
     g_tasks[g_currentTask].task_state      = TASK_STATE_TIME_DELAY;
 
-    // Generate an SVC to yield
     __asm volatile("SVC #0");
 }
 
@@ -234,7 +219,6 @@ void Scheduler_RoundRobin(void)
     }
     while (g_tasks[g_currentTask].task_state != TASK_STATE_READY);
 
-    // Mark the new task as running
     g_tasks[g_currentTask].task_state = TASK_STATE_RUNNING;
 }
 
@@ -246,17 +230,17 @@ void Scheduler_RoundRobin(void)
 __attribute__((naked)) void PendSV_Handler(void)
 {
     __asm volatile (
-        "PUSH   {LR}            \n"  /* Save LR on MSP */
-        "CPSID  i               \n"  /* Disable interrupts */
+        "PUSH   {LR}            \n"
+        "CPSID  i               \n" 
     );
 
     /* Save current task context (R4-R11) */
     __asm volatile (
-        "MRS    R0, PSP         \n"  /* R0 = current PSP */
-        "STMDB  R0!, {R4-R11}   \n"  /* Push R4-R11 */
+        "MRS    R0, PSP         \n" 
+        "STMDB  R0!, {R4-R11}   \n" 
     );
     __asm volatile (
-        "STR    R0, [%0]        \n"  /* Store updated PSP in g_tasks[g_currentTask].stack_top_ptr */
+        "STR    R0, [%0]        \n"
         :
         : "r" (&g_tasks[g_currentTask].stack_top_ptr)
         : "r0", "memory"
@@ -270,11 +254,11 @@ __attribute__((naked)) void PendSV_Handler(void)
     /* Restore next task context */
     __asm volatile (
         "ISB                    \n"
-        "LDR    R0, [%0]        \n"  /* R0 = next task's PSP */
-        "LDMIA  R0!, {R4-R11}   \n"  /* Pop R4-R11 for the new task */
-        "MSR    PSP, R0         \n"  /* Update PSP */
+        "LDR    R0, [%0]        \n" 
+        "LDMIA  R0!, {R4-R11}   \n" 
+        "MSR    PSP, R0         \n" 
         "ISB                    \n"
-        "CPSIE  i               \n"  /* Enable interrupts */
+        "CPSIE  i               \n" 
         "POP    {LR}            \n"
         "BX     LR              \n"
         :
@@ -290,17 +274,17 @@ __attribute__((naked)) void PendSV_Handler(void)
 __attribute__((naked)) void SVC_Handler(void)
 {
     __asm volatile (
-        "PUSH   {LR}            \n"  /* Save LR on MSP */
-        "CPSID  i               \n"  /* Disable interrupts */
+        "PUSH   {LR}            \n"
+        "CPSID  i               \n"
     );
 
     /* Save current task context (R4-R11) */
     __asm volatile (
-        "MRS    R0, PSP         \n"  /* R0 = current PSP */
-        "STMDB  R0!, {R4-R11}   \n"  /* Push R4-R11 */
+        "MRS    R0, PSP         \n" 
+        "STMDB  R0!, {R4-R11}   \n" 
     );
     __asm volatile (
-        "STR    R0, [%0]        \n"  /* Store updated PSP in g_tasks[g_currentTask].stack_top_ptr */
+        "STR    R0, [%0]        \n" 
         :
         : "r" (&g_tasks[g_currentTask].stack_top_ptr)
         : "r0", "memory"
@@ -314,11 +298,11 @@ __attribute__((naked)) void SVC_Handler(void)
     /* Restore next task context */
     __asm volatile (
         "ISB                    \n"
-        "LDR    R0, [%0]        \n"  /* R0 = next task's PSP */
-        "LDMIA  R0!, {R4-R11}   \n"  /* Pop R4-R11 for the new task */
-        "MSR    PSP, R0         \n"  /* Update PSP */
+        "LDR    R0, [%0]        \n" 
+        "LDMIA  R0!, {R4-R11}   \n"
+        "MSR    PSP, R0         \n" 
         "ISB                    \n"
-        "CPSIE  i               \n"  /* Enable interrupts */
+        "CPSIE  i               \n" 
         "POP    {LR}            \n"
         "BX     LR              \n"
         :
@@ -333,10 +317,6 @@ __attribute__((naked)) void SVC_Handler(void)
  */
 void OSSysTick_Handler(void)
 {
-    // Optionally keep HAL time base
-    // HAL_IncTick();
-
-    // Trigger PendSV for context switch
     SCB->ICSR = SCB_ICSR_PENDSVSET_Msk;
 }
 

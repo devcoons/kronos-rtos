@@ -36,8 +36,8 @@ a separate license is required. Contact:
 /* --------------------- RTOS Configurations --------------------- */
 #define MAX_TASKS       10
 #define STACK_SIZE      48         // in 32-bit words
-#define CPU_FREQ_HZ     80000000   // e.g., 80 MHz system clock
-#define TICK_FREQ_HZ    1000       // 1ms tick
+#define CPU_FREQ_HZ     80000000  
+#define TICK_FREQ_HZ    1000     
 
 /******************************************************************************
  * Includes
@@ -48,9 +48,7 @@ a separate license is required. Contact:
 /******************************************************************************
  * Enumerations, structures & Variables
 ******************************************************************************/
-/**
- * @brief Task states used by KronOS
- */
+
 typedef enum
 {
     TASK_STATE_UNKNOWN,
@@ -65,21 +63,17 @@ typedef enum
     TASK_STATE_ERROR_STACK_OVERFLOW
 } task_state_e;
 
-/**
- * @brief Task Control Block (TCB)
- */
 typedef struct
 {
-    uint32_t       *stack_top_ptr;  /**< Current top of stack (PSP) */
-    uint32_t       *stack_bot_ptr;  /**< Bottom pointer for reference */
+    uint32_t       *stack_top_ptr;
+    uint32_t       *stack_bot_ptr; 
     task_state_e    task_state;
     uint32_t        remaining_delay;
     uint32_t        last_delay_decr;
-    void            (*task_fn)(void);        /**< Pointer to the task function */
-    uint32_t        stack[STACK_SIZE];       /**< Stack allocated for this task */
+    void            (*task_fn)(void);        
+    uint32_t        stack[STACK_SIZE];    /**< Stack allocated for this task */
 } TCB_t;
 
-/* Global variables (extern) */
 extern TCB_t     g_tasks[MAX_TASKS];
 extern uint32_t  g_numTasks;
 extern uint32_t  g_currentTask;
@@ -113,11 +107,6 @@ void RTOS_Delay(uint32_t ms);
  * @brief Perform round-robin scheduling
  */
 void Scheduler_RoundRobin(void);
-
-/**
- * @brief PendSV handler used by KronOS for context switching
- */
-__attribute__((naked)) void OSPendSV_Handler(void);
 
 /**
  * @brief SysTick handler to trigger context switches
