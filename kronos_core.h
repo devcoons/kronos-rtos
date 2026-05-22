@@ -1,0 +1,108 @@
+/*!
+@file   kronos_core.h
+@brief  Header file of KronOS (RTOS) Core functionalities
+
+---------------------------------------------------------------------------
+GNU Affero General Public License v3.0
+
+Copyright (c) 2024 Ioannis D. (devcoons)
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial use, including proprietary or for-profit applications,
+a separate license is required. Contact:
+
+- GitHub: [https://github.com/devcoons](https://github.com/devcoons)
+- Email: i_-_-_s@outlook.com
+*/
+
+#ifndef KRONOS_CORE_H
+#define KRONOS_CORE_H
+
+#include <stdint.h>
+
+#define MAX_APPLICATION_TASKS         10U
+#define SYSTEM_TASK_COUNT             1U
+#define MAX_TASKS                     (MAX_APPLICATION_TASKS + SYSTEM_TASK_COUNT)
+#define DEFAULT_STACK_SIZE_WORDS      48U
+#define MIN_STACK_SIZE_WORDS          32U
+#define IDLE_TASK_STACK_SIZE_WORDS    64U
+#define STACK_POOL_SIZE_WORDS         2048U
+#define CPU_FREQ_HZ                   4000000UL
+#define TICK_FREQ_HZ                  1000UL
+
+#define KRONOS_TASK_FAULT_NONE            0UL
+#define KRONOS_TASK_FAULT_STACK_WARNING   (1UL << 0)
+#define KRONOS_TASK_FAULT_STACK_OVERFLOW  (1UL << 1)
+#define KRONOS_TASK_FAULT_MEMORY_ACCESS   (1UL << 2)
+
+typedef enum
+{
+    TASK_STATE_UNKNOWN,
+    TASK_STATE_READY,
+    TASK_STATE_RUNNING,
+    TASK_STATE_PAUSED,
+    TASK_STATE_TIME_DELAY,
+    TASK_STATE_WAITING,
+    TASK_STATE_DELETING,
+    TASK_STATE_STOPPED,
+    TASK_STATE_ERROR,
+    TASK_STATE_ERROR_STACK_OVERFLOW
+} task_state_e;
+
+typedef enum
+{
+    TASK_KIND_APPLICATION,
+    TASK_KIND_SYSTEM,
+    TASK_KIND_IDLE
+} task_kind_e;
+
+typedef struct
+{
+    uint32_t *stack_top_ptr;
+    uint32_t *stack_slot_start_ptr;
+    uint32_t *stack_limit_ptr;
+    uint32_t *stack_warning_ptr;
+    uint32_t *stack_slot_end_ptr;
+    task_state_e task_state;
+    task_kind_e task_kind;
+    uint32_t remaining_delay;
+    uint32_t last_delay_decr;
+    void (*task_fn)(void);
+    const char *task_name;
+    uint32_t requested_stack_words;
+    uint32_t stack_slot_words;
+    uint32_t stack_warning_words;
+    uint32_t stack_reserved_words;
+    uint32_t stack_used_words;
+    uint32_t stack_free_words;
+    uint32_t stack_high_watermark_words;
+    uint32_t fault_flags;
+    uint32_t fault_address;
+} TCB_t;
+
+extern TCB_t g_tasks[MAX_TASKS];
+extern uint32_t g_numTasks;
+extern uint32_t g_currentTask;
+
+void RTOS_Init(void);
+int32_t RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName);
+int32_t RTOS_TaskPause(uint32_t taskId);
+int32_t RTOS_TaskResume(uint32_t taskId);
+void RTOS_Start(void);
+void RTOS_Delay(uint32_t ms);
+void Scheduler_RoundRobin(void);
+const TCB_t *RTOS_GetTaskTable(void);
+uint32_t RTOS_GetTaskCount(void);
+
+#endif /* KRONOS_CORE_H */

@@ -1,0 +1,51 @@
+/*!
+@file   kronos_port_stm32_family.h
+@brief  STM32 family selection helpers for the KronOS port layer
+*/
+
+#ifndef KRONOS_PORT_STM32_FAMILY_H
+#define KRONOS_PORT_STM32_FAMILY_H
+
+#include <stdint.h>
+
+#define KRONOS_PORT_MPU_REGION_COUNT        8U
+#define KRONOS_PORT_TASK_STACK_REGION_INDEX (KRONOS_PORT_MPU_REGION_COUNT - 1U)
+
+#if defined(RTE_DEVICE_STARTUP_STM32L4XX) || defined(STM32L4xx) || defined(STM32L4XX)
+#define KRONOS_PORT_STM32_FAMILY_L4 1U
+#else
+#define KRONOS_PORT_STM32_FAMILY_L4 0U
+#endif
+
+#if defined(RTE_DEVICE_STARTUP_STM32G4XX) || defined(STM32G4xx) || defined(STM32G4XX)
+#define KRONOS_PORT_STM32_FAMILY_G4 1U
+#else
+#define KRONOS_PORT_STM32_FAMILY_G4 0U
+#endif
+
+#if defined(RTE_DEVICE_STARTUP_STM32L5XX) || defined(STM32L5xx) || defined(STM32L5XX)
+#define KRONOS_PORT_STM32_FAMILY_L5 1U
+#else
+#define KRONOS_PORT_STM32_FAMILY_L5 0U
+#endif
+
+#if defined(RTE_DEVICE_STARTUP_STM32H7XX) || defined(STM32H7xx) || defined(STM32H7XX)
+#define KRONOS_PORT_STM32_FAMILY_H7 1U
+#else
+#define KRONOS_PORT_STM32_FAMILY_H7 0U
+#endif
+
+#if ((KRONOS_PORT_STM32_FAMILY_L4 + KRONOS_PORT_STM32_FAMILY_G4 + \
+      KRONOS_PORT_STM32_FAMILY_L5 + KRONOS_PORT_STM32_FAMILY_H7) == 0U)
+#error "KronOS STM32 port requires an STM32L4, STM32G4, STM32L5, or STM32H7 family define."
+#endif
+
+#if ((KRONOS_PORT_STM32_FAMILY_L4 + KRONOS_PORT_STM32_FAMILY_G4 + \
+      KRONOS_PORT_STM32_FAMILY_L5 + KRONOS_PORT_STM32_FAMILY_H7) > 1U)
+#error "KronOS STM32 port detected multiple STM32 family defines."
+#endif
+
+#define KRONOS_PORT_STM32_IS_ARMV7M \
+    (KRONOS_PORT_STM32_FAMILY_L4 || KRONOS_PORT_STM32_FAMILY_G4 || KRONOS_PORT_STM32_FAMILY_H7)
+
+#endif /* KRONOS_PORT_STM32_FAMILY_H */
