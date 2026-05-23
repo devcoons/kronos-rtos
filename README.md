@@ -18,12 +18,15 @@ KronOS is intentionally small, but it already includes the main kernel services 
 - fixed round-robin scheduling
 - one internal idle task
 - per-task stack sizing at task creation
+- task creation while the scheduler is running
+- task deletion while the scheduler is running
 - delay in milliseconds
 - task pause and resume
 - mutexes
 - counting semaphores
 - scheduler suspend, resume, and forced context switch
 - mailbox-style task messaging with ingress and egress APIs
+- privileged atomic driver initialization from a task
 - per-task stack tracking and fault quarantine support
 
 The public API is in `Libs/KrRtos/kronos_core.h`.
@@ -34,10 +37,12 @@ Task control:
 
 - `RTOS_Init()`
 - `RTOS_CreateTask()`
+- `RTOS_TaskDelete()`
 - `RTOS_Start()`
 - `RTOS_Delay()`
 - `RTOS_TaskPause()`
 - `RTOS_TaskResume()`
+- `RTOS_DriverInit()`
 - `RTOS_GetTaskTable()`
 - `RTOS_GetTaskCount()`
 
@@ -93,7 +98,9 @@ int main(void)
 
     RTOS_Init();
 
-    if (RTOS_CreateTask(blink_task, 64U, "blink") < 0)
+    kronos_task_id_t blink_task_id;
+
+    if (RTOS_CreateTask(blink_task, 64U, "blink", &blink_task_id) != KRONOS_STATUS_OK)
     {
         for (;;)
         {
@@ -111,10 +118,11 @@ int main(void)
 Notes:
 
 - Task functions must be `void task(void)`.
-- A task should normally run forever.
+- A task should normally run forever. If it returns, KronOS deletes/stops it through the cleanup path.
 - `RTOS_Start()` is not expected to return.
 - `stackWords` is in 32-bit words, not bytes.
 - `64U` means 64 words, which is 256 bytes.
+- `RTOS_CreateTask()` returns a status code and writes the task ID through the output pointer.
 
 ## Simple mailbox example
 
@@ -287,10 +295,10 @@ Typical order:
 
 1. Initialize board and clock.
 2. Call `RTOS_Init()`.
-3. Create application tasks.
+3. Create initial application tasks.
 4. Call `RTOS_Start()`.
 
-Do not create tasks after the scheduler starts.
+Tasks can also create or delete application tasks after the scheduler starts. Runtime creation and deletion are performed through the kernel service path.
 
 ## Simple CMake example
 
@@ -317,7 +325,9 @@ Then add the correct STM32 family define for your target.
 
 - There is always one internal idle task.
 - Task stacks come from a fixed pool.
-- If task creation fails, `RTOS_CreateTask()` returns a negative value.
+- If task creation fails, `RTOS_CreateTask()` returns a `kronos_status_e` error code.
+- Deleted tasks release pending mailbox messages. If a deleted task owns a registered mutex, KronOS releases it and wakes one waiter.
+- Mutexes and semaphores must be initialized before use. KronOS rejects uninitialized sync objects.
 - The default tick is `1000 Hz`, so `RTOS_Delay()` uses milliseconds in the current code.
 - Stack sizing and limits can be adjusted in `Libs/KrRtos/kronos_core.h`.
 - Mailboxes use a fixed global slot pool and a bounded payload size.

@@ -37,27 +37,34 @@ KronOS is a small fixed round-robin RTOS for STM32 microcontrollers.
 
 Core behavior:
 
-- Tasks are created before the scheduler starts.
+- Initial tasks are usually created before the scheduler starts.
 - One idle task is created internally by `RTOS_Init()`.
 - The scheduler uses a 1 kHz tick by default.
 - Task stacks are allocated from a fixed stack pool.
 - Each task has an ingress mailbox queue.
 - Messages are copied into fixed-size global mail slots.
 - Mutex, semaphore, delay, messaging, and scheduler control services are handled through supervisor calls.
+- Tasks can be created and deleted after the scheduler starts.
+- Driver initialization can be requested from a task and executed atomically in kernel context.
 - The port layer configures SysTick, SVC, PendSV, MemManage, and MPU regions.
 
 Normal application order:
 
 ```c
 RTOS_Init();
-(void)RTOS_CreateTask(task_a, 64U, "task_a");
-(void)RTOS_CreateTask(task_b, 64U, "task_b");
+{
+    kronos_task_id_t task_a_id;
+    kronos_task_id_t task_b_id;
+
+    (void)RTOS_CreateTask(task_a, 64U, "task_a", &task_a_id);
+    (void)RTOS_CreateTask(task_b, 64U, "task_b", &task_b_id);
+}
 RTOS_Start();
 ```
 
 ## Status Codes
 
-Most public APIs return `int32_t`. Use the `kronos_status_e` values where available.
+Status-returning public APIs return `kronos_status_e`.
 
 | Code | Value | Meaning |
 | --- | ---: | --- |
@@ -71,8 +78,11 @@ Most public APIs return `int32_t`. Use the `kronos_status_e` values where availa
 | `KRONOS_STATUS_EMPTY` | `-7` | A mailbox has no pending message. |
 | `KRONOS_STATUS_TOO_LARGE` | `-8` | A message payload is larger than `KRONOS_MESSAGE_MAX_PAYLOAD_BYTES`. |
 | `KRONOS_STATUS_MAILBOX_FULL` | `-9` | No global mail slot is available for delivery. |
+| `KRONOS_STATUS_INVALID_STATE` | `-10` | The object or task is valid but not in a state where the operation is allowed. |
+| `KRONOS_STATUS_NO_MEMORY` | `-11` | No task slot, stack slot, mailbox slot, or registry slot is available. |
+| `KRONOS_STATUS_IN_USE` | `-12` | The resource already exists or cannot be reinitialized while active. |
 
-Some older task APIs return plain `0` for success and `-1` for failure instead of the named status enum.
+Functions that return counts or pointers keep their natural return type.
 
 ## Public API
 
@@ -115,7 +125,11 @@ int main(void)
 {
     board_init();
     RTOS_Init();
-    (void)RTOS_CreateTask(app_task, 64U, "app");
+    {
+        kronos_task_id_t app_task_id;
+
+        (void)RTOS_CreateTask(app_task, 64U, "app", &app_task_id);
+    }
     RTOS_Start();
 }
 ```
@@ -123,9 +137,10 @@ int main(void)
 #### `RTOS_CreateTask`
 
 ```c
-int32_t RTOS_CreateTask(void (*taskFunction)(void),
-                        uint32_t stackWords,
-                        const char *taskName);
+kronos_status_e RTOS_CreateTask(void (*taskFunction)(void),
+                                uint32_t stackWords,
+                                const char *taskName,
+                                kronos_task_id_t *taskId);
 ```
 
 Visibility: Public application API.
@@ -137,26 +152,30 @@ Inputs:
 | `taskFunction` | Task entry function. It must match `void task(void)`. |
 | `stackWords` | Requested task stack size in 32-bit words. `0` uses `DEFAULT_STACK_SIZE_WORDS`. |
 | `taskName` | Unique non-empty task name string. |
+| `taskId` | Output pointer for the created task ID. |
 
-Outputs: Creates one task control block and one stack slot.
+Outputs: Creates one task control block and one stack slot, and writes the task ID to `*taskId`.
 
 What it does: Creates an application task in the ready state.
 
-How it works: Validates the task, rounds the stack size to an even word count, allocates a port-sized stack slot from the static stack pool, builds the initial exception frame, and appends the task to `g_tasks`.
+How it works: Before the scheduler starts, the task is created directly. After the scheduler starts, the request is handled through SVC in kernel context. KronOS validates the task, rounds the stack size to an even word count, allocates or reuses a port-sized stack slot, builds the initial exception frame, and places the task in `g_tasks`.
 
 Return values:
 
 | Return | Meaning |
-| ---: | --- |
-| `>= 0` | Task ID/index in `g_tasks`. |
-| `-1` | Scheduler already started, invalid argument, duplicate name, too many tasks, too small stack, or no stack pool space. |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Task created and `*taskId` written. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Null task function, null/empty name, null `taskId`, or too-small stack. |
+| `KRONOS_STATUS_IN_USE` | Another active task already uses the same name. |
+| `KRONOS_STATUS_NO_MEMORY` | No task slot or stack pool space is available. |
 
 Notes:
 
-- Tasks must be created before `RTOS_Start()`.
+- Tasks can be created before or after `RTOS_Start()`.
 - `stackWords` is words, not bytes. `64U` means 256 bytes.
 - Task names must be unique.
-- A task should normally run forever. If it returns, KronOS marks it stopped.
+- Deleted task slots may be reused.
+- A task should normally run forever. If it returns, KronOS routes it through task deletion cleanup and stops it.
 
 Example:
 
@@ -170,8 +189,52 @@ static void sensor_task(void)
     }
 }
 
-int32_t sensor_id = RTOS_CreateTask(sensor_task, 96U, "sensor");
-if (sensor_id < 0)
+kronos_task_id_t sensor_id;
+
+if (RTOS_CreateTask(sensor_task, 96U, "sensor", &sensor_id) != KRONOS_STATUS_OK)
+{
+    error_handler();
+}
+```
+
+#### `RTOS_TaskDelete`
+
+```c
+kronos_status_e RTOS_TaskDelete(kronos_task_id_t taskId);
+```
+
+Visibility: Public application API.
+
+Inputs:
+
+| Input | Description |
+| --- | --- |
+| `taskId` | Task ID to delete. |
+
+Outputs: Marks the task stopped and cleans task-owned runtime resources.
+
+What it does: Deletes an application task before or after the scheduler starts.
+
+How it works: Before the scheduler starts, deletion runs directly. After the scheduler starts, the request is handled through SVC in kernel context. KronOS rejects the idle task, removes pending mailbox messages where the task is sender or receiver, releases any registered mutex owned by the task, clears wait/service state, and marks the task slot stopped for later reuse.
+
+Return values:
+
+| Return | Meaning |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Task deleted. |
+| `KRONOS_STATUS_NOT_FOUND` | Task ID is invalid or the task is already stopped. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | The task is the internal idle task. |
+
+Notes:
+
+- A task may delete itself. On successful self-delete, the call does not return to that task.
+- Deleting a task does not compact the task table. This keeps existing task IDs stable.
+- Mutex cleanup only applies to mutexes initialized with `RTOS_MutexInit()`.
+
+Example:
+
+```c
+if (RTOS_TaskDelete(sensor_id) != KRONOS_STATUS_OK)
 {
     error_handler();
 }
@@ -205,7 +268,11 @@ Example:
 
 ```c
 RTOS_Init();
-(void)RTOS_CreateTask(control_task, 128U, "control");
+{
+    kronos_task_id_t control_task_id;
+
+    (void)RTOS_CreateTask(control_task, 128U, "control", &control_task_id);
+}
 RTOS_Start();
 ```
 
@@ -250,7 +317,7 @@ for (;;)
 #### `RTOS_TaskPause`
 
 ```c
-int32_t RTOS_TaskPause(uint32_t taskId);
+kronos_status_e RTOS_TaskPause(kronos_task_id_t taskId);
 ```
 
 Visibility: Public application API.
@@ -259,20 +326,21 @@ Inputs:
 
 | Input | Description |
 | --- | --- |
-| `taskId` | Task ID returned by `RTOS_CreateTask()` or index in `g_tasks`. |
+| `taskId` | Task ID returned by `RTOS_CreateTask()`. |
 
 Outputs: Changes the target task state to `TASK_STATE_PAUSED`.
 
 What it does: Pauses another task.
 
-How it works: Validates the task ID, rejects the current task and idle task, then changes a ready or delayed task to paused.
+How it works: Before the scheduler starts, the task is paused directly. After the scheduler starts, the request is handled through SVC. KronOS validates the task ID, rejects the current task and idle task, then changes a ready or delayed task to paused.
 
 Return values:
 
 | Return | Meaning |
-| ---: | --- |
-| `0` | Task is paused, or it was already paused. |
-| `-1` | Invalid task, current task, idle task, or task is not ready/delayed/paused. |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Task is paused, or it was already paused. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Invalid task, current task, or idle task. |
+| `KRONOS_STATUS_INVALID_STATE` | Task is not ready, delayed, or already paused. |
 
 Notes:
 
@@ -282,13 +350,13 @@ Notes:
 Example:
 
 ```c
-static int32_t worker_id;
+static kronos_task_id_t worker_id = KRONOS_INVALID_TASK_ID;
 
 void stop_worker_temporarily(void)
 {
-    if (worker_id >= 0)
+    if (worker_id != KRONOS_INVALID_TASK_ID)
     {
-        (void)RTOS_TaskPause((uint32_t)worker_id);
+        (void)RTOS_TaskPause(worker_id);
     }
 }
 ```
@@ -296,7 +364,7 @@ void stop_worker_temporarily(void)
 #### `RTOS_TaskResume`
 
 ```c
-int32_t RTOS_TaskResume(uint32_t taskId);
+kronos_status_e RTOS_TaskResume(kronos_task_id_t taskId);
 ```
 
 Visibility: Public application API.
@@ -305,25 +373,26 @@ Inputs:
 
 | Input | Description |
 | --- | --- |
-| `taskId` | Task ID returned by `RTOS_CreateTask()` or index in `g_tasks`. |
+| `taskId` | Task ID returned by `RTOS_CreateTask()`. |
 
 Outputs: Moves a paused task back to ready or delayed state.
 
 What it does: Resumes a paused task.
 
-How it works: If the paused task still has `remaining_delay > 0`, it returns to `TASK_STATE_TIME_DELAY`. Otherwise it becomes ready. If the scheduler is suspended, a pending switch is recorded.
+How it works: Before the scheduler starts, the task is resumed directly. After the scheduler starts, the request is handled through SVC. If the paused task still has `remaining_delay > 0`, it returns to `TASK_STATE_TIME_DELAY`. Otherwise it becomes ready. If the scheduler is suspended, a pending switch is recorded.
 
 Return values:
 
 | Return | Meaning |
-| ---: | --- |
-| `0` | Task resumed. |
-| `-1` | Invalid task or task is not paused. |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Task resumed. |
+| `KRONOS_STATUS_NOT_FOUND` | Task ID is invalid. |
+| `KRONOS_STATUS_INVALID_STATE` | Task is not paused. |
 
 Example:
 
 ```c
-(void)RTOS_TaskResume((uint32_t)worker_id);
+(void)RTOS_TaskResume(worker_id);
 ```
 
 ### Scheduler Control
@@ -410,6 +479,65 @@ while (work_queue_empty())
 }
 ```
 
+#### `RTOS_DriverInit`
+
+```c
+kronos_status_e RTOS_DriverInit(kronos_driver_init_fn_t initFunction,
+                                void *context);
+```
+
+Visibility: Public application API.
+
+Inputs:
+
+| Input | Description |
+| --- | --- |
+| `initFunction` | Driver initialization function to run in kernel context. |
+| `context` | Caller-provided pointer passed to `initFunction`. May be null if the init function does not need context. |
+
+Outputs: Executes the driver initialization function and returns its status.
+
+What it does: Allows an unprivileged task to request privileged driver or peripheral initialization.
+
+How it works: Before the scheduler starts, KronOS calls the function directly. After the scheduler starts, KronOS sends an SVC request. The STM32 SVC handler runs with interrupts disabled while `initFunction(context)` executes, so no task switch can happen during the initialization.
+
+Return values:
+
+| Return | Meaning |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Driver init function completed successfully. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | `initFunction` is null. |
+| Other `kronos_status_e` | Status returned by `initFunction`. |
+
+Notes:
+
+- The init function must be short and deterministic.
+- The init function must not call blocking RTOS APIs.
+- This service is intended for peripheral setup that must run privileged and atomically.
+
+Example:
+
+```c
+static kronos_status_e uart_driver_init(void *context)
+{
+    uart_config_t *config = (uart_config_t *)context;
+
+    uart_register_init(config);
+    return KRONOS_STATUS_OK;
+}
+
+void app_task(void)
+{
+    uart_config_t config = { 115200U };
+
+    (void)RTOS_DriverInit(uart_driver_init, &config);
+    for (;;)
+    {
+        RTOS_Delay(1000U);
+    }
+}
+```
+
 #### `Scheduler_RoundRobin`
 
 ```c
@@ -440,8 +568,8 @@ Task messaging uses per-task ingress queues and egress send APIs. A message cont
 #### `RTOS_IngressResolve`
 
 ```c
-int32_t RTOS_IngressResolve(kronos_ingress_t *ingress,
-                            const char *taskName);
+kronos_status_e RTOS_IngressResolve(kronos_ingress_t *ingress,
+                                    const char *taskName);
 ```
 
 Visibility: Public application API.
@@ -482,10 +610,10 @@ if (RTOS_IngressResolve(&logger, "logger") == KRONOS_STATUS_OK)
 #### `RTOS_EgressSend`
 
 ```c
-int32_t RTOS_EgressSend(const kronos_ingress_t *ingress,
-                        uint32_t messageId,
-                        const void *payloadPtr,
-                        uint32_t payloadSize);
+kronos_status_e RTOS_EgressSend(const kronos_ingress_t *ingress,
+                                uint32_t messageId,
+                                const void *payloadPtr,
+                                uint32_t payloadSize);
 ```
 
 Visibility: Public application API.
@@ -531,10 +659,10 @@ sample_msg_t msg = { .value = 42U };
 #### `RTOS_EgressSendByName`
 
 ```c
-int32_t RTOS_EgressSendByName(const char *taskName,
-                              uint32_t messageId,
-                              const void *payloadPtr,
-                              uint32_t payloadSize);
+kronos_status_e RTOS_EgressSendByName(const char *taskName,
+                                      uint32_t messageId,
+                                      const void *payloadPtr,
+                                      uint32_t payloadSize);
 ```
 
 Visibility: Public application API.
@@ -571,9 +699,9 @@ uint32_t command = 7U;
 #### `RTOS_EgressBroadcast`
 
 ```c
-int32_t RTOS_EgressBroadcast(uint32_t messageId,
-                             const void *payloadPtr,
-                             uint32_t payloadSize);
+kronos_status_e RTOS_EgressBroadcast(uint32_t messageId,
+                                     const void *payloadPtr,
+                                     uint32_t payloadSize);
 ```
 
 Visibility: Public application API.
@@ -619,7 +747,7 @@ uint32_t mode = 2U;
 #### `RTOS_IngressReceive`
 
 ```c
-int32_t RTOS_IngressReceive(kronos_mail_t *message);
+kronos_status_e RTOS_IngressReceive(kronos_mail_t *message);
 ```
 
 Visibility: Public application API.
@@ -659,7 +787,7 @@ if (RTOS_IngressReceive(&mail) == KRONOS_STATUS_OK)
 #### `RTOS_IngressWait`
 
 ```c
-int32_t RTOS_IngressWait(void);
+kronos_status_e RTOS_IngressWait(void);
 ```
 
 Visibility: Public application API.
@@ -697,7 +825,7 @@ if (RTOS_IngressWait() == KRONOS_STATUS_OK)
 #### `RTOS_IngressReceiveWait`
 
 ```c
-int32_t RTOS_IngressReceiveWait(kronos_mail_t *message);
+kronos_status_e RTOS_IngressReceiveWait(kronos_mail_t *message);
 ```
 
 Visibility: Public application API.
@@ -771,8 +899,8 @@ while (RTOS_IngressPendingCount() > 0U)
 #### `RTOS_IngressPendingCountByName`
 
 ```c
-int32_t RTOS_IngressPendingCountByName(const char *taskName,
-                                       uint32_t *pendingCount);
+kronos_status_e RTOS_IngressPendingCountByName(const char *taskName,
+                                               uint32_t *pendingCount);
 ```
 
 Visibility: Public application API.
@@ -814,7 +942,7 @@ if (RTOS_IngressPendingCountByName("logger", &pending) == KRONOS_STATUS_OK)
 #### `RTOS_MutexInit`
 
 ```c
-int32_t RTOS_MutexInit(kronos_mutex_t *mutex);
+kronos_status_e RTOS_MutexInit(kronos_mutex_t *mutex);
 ```
 
 Visibility: Public application API.
@@ -825,18 +953,20 @@ Inputs:
 | --- | --- |
 | `mutex` | Mutex object to initialize. |
 
-Outputs: Initializes `owner_task_id` and `lock_count`.
+Outputs: Initializes `owner_task_id`, `lock_count`, and the internal initialization marker.
 
 What it does: Prepares a mutex for use.
 
-How it works: Sets owner to `KRONOS_INVALID_TASK_ID` and lock count to zero.
+How it works: If the mutex is already registered and active, KronOS rejects reinitialization. Otherwise it sets owner to `KRONOS_INVALID_TASK_ID`, sets lock count to zero, marks the mutex initialized, and registers it for task-deletion cleanup.
 
 Return values:
 
 | Return | Meaning |
-| ---: | --- |
+| --- | --- |
 | `KRONOS_STATUS_OK` | Mutex initialized. |
 | `KRONOS_STATUS_INVALID_ARGUMENT` | `mutex` is null. |
+| `KRONOS_STATUS_IN_USE` | Mutex is locked or has waiters. |
+| `KRONOS_STATUS_NO_MEMORY` | The sync object registry is full. |
 
 Example:
 
@@ -852,7 +982,7 @@ void app_init(void)
 #### `RTOS_MutexLock`
 
 ```c
-int32_t RTOS_MutexLock(kronos_mutex_t *mutex);
+kronos_status_e RTOS_MutexLock(kronos_mutex_t *mutex);
 ```
 
 Visibility: Public application API.
@@ -874,7 +1004,7 @@ Return values:
 | Return | Meaning |
 | ---: | --- |
 | `KRONOS_STATUS_OK` | Lock acquired, recursive lock accepted, or task blocked and later resumed. |
-| `KRONOS_STATUS_INVALID_ARGUMENT` | `mutex` is null. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Mutex is null, uninitialized, or corrupted. |
 | `KRONOS_STATUS_ERROR` | Scheduler not started or current task invalid. |
 | `KRONOS_STATUS_OVERFLOW` | Recursive lock count would overflow. |
 | `KRONOS_STATUS_SCHEDULER_SUSPENDED` | Mutex is owned by another task and blocking is not allowed. |
@@ -892,7 +1022,7 @@ if (RTOS_MutexLock(&i2c_mutex) == KRONOS_STATUS_OK)
 #### `RTOS_MutexUnlock`
 
 ```c
-int32_t RTOS_MutexUnlock(kronos_mutex_t *mutex);
+kronos_status_e RTOS_MutexUnlock(kronos_mutex_t *mutex);
 ```
 
 Visibility: Public application API.
@@ -914,7 +1044,7 @@ Return values:
 | Return | Meaning |
 | ---: | --- |
 | `KRONOS_STATUS_OK` | Mutex unlocked. |
-| `KRONOS_STATUS_INVALID_ARGUMENT` | `mutex` is null. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Mutex is null, uninitialized, or corrupted. |
 | `KRONOS_STATUS_ERROR` | Scheduler not started or current task invalid. |
 | `KRONOS_STATUS_NOT_OWNER` | Current task does not own the mutex. |
 
@@ -927,9 +1057,9 @@ Example:
 #### `RTOS_SemaphoreInit`
 
 ```c
-int32_t RTOS_SemaphoreInit(kronos_semaphore_t *semaphore,
-                           uint32_t initialCount,
-                           uint32_t maxCount);
+kronos_status_e RTOS_SemaphoreInit(kronos_semaphore_t *semaphore,
+                                   uint32_t initialCount,
+                                   uint32_t maxCount);
 ```
 
 Visibility: Public application API.
@@ -942,18 +1072,20 @@ Inputs:
 | `initialCount` | Initial available count. |
 | `maxCount` | Maximum count. Must be non-zero. |
 
-Outputs: Initializes the semaphore counters.
+Outputs: Initializes the semaphore counters and the internal initialization marker.
 
 What it does: Prepares a counting semaphore for use.
 
-How it works: Validates the counts, then stores `initialCount` and `maxCount`.
+How it works: Validates the counts, rejects reinitialization while tasks wait on the semaphore, stores `initialCount` and `maxCount`, marks the semaphore initialized, and registers it for validation.
 
 Return values:
 
 | Return | Meaning |
-| ---: | --- |
+| --- | --- |
 | `KRONOS_STATUS_OK` | Semaphore initialized. |
 | `KRONOS_STATUS_INVALID_ARGUMENT` | Null semaphore, zero max count, or initial count greater than max count. |
+| `KRONOS_STATUS_IN_USE` | Semaphore has waiters. |
+| `KRONOS_STATUS_NO_MEMORY` | The sync object registry is full. |
 
 Example:
 
@@ -966,7 +1098,7 @@ static kronos_semaphore_t rx_sem;
 #### `RTOS_SemaphoreTake`
 
 ```c
-int32_t RTOS_SemaphoreTake(kronos_semaphore_t *semaphore);
+kronos_status_e RTOS_SemaphoreTake(kronos_semaphore_t *semaphore);
 ```
 
 Visibility: Public application API.
@@ -1004,7 +1136,7 @@ if (RTOS_SemaphoreTake(&rx_sem) == KRONOS_STATUS_OK)
 #### `RTOS_SemaphoreGive`
 
 ```c
-int32_t RTOS_SemaphoreGive(kronos_semaphore_t *semaphore);
+kronos_status_e RTOS_SemaphoreGive(kronos_semaphore_t *semaphore);
 ```
 
 Visibility: Public application API.
@@ -1097,7 +1229,7 @@ Inputs: None.
 
 Outputs: None.
 
-What it does: Returns the number of created tasks, including the internal idle task.
+What it does: Returns the number of task table slots currently in use, including the internal idle task and stopped reusable slots below the high-water mark.
 
 How it works: Returns `g_numTasks`.
 
@@ -1411,10 +1543,11 @@ Return values: None.
 #### `Kronos_TaskCreateInternal`
 
 ```c
-int32_t Kronos_TaskCreateInternal(void (*taskFunction)(void),
-                                  uint32_t stackWords,
-                                  const char *taskName,
-                                  task_kind_e taskKind);
+kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void),
+                                          uint32_t stackWords,
+                                          const char *taskName,
+                                          task_kind_e taskKind,
+                                          kronos_task_id_t *taskId);
 ```
 
 Visibility: Internal task API.
@@ -1427,19 +1560,68 @@ Inputs:
 | `stackWords` | Requested usable stack words. |
 | `taskName` | Unique task name. |
 | `taskKind` | Application, system, or idle. |
+| `taskId` | Output pointer for the created task ID. |
 
-Outputs: Adds a task and stack slot.
+Outputs: Adds a task and stack slot, and writes the task ID to `*taskId`.
 
 What it does: Creates any kind of KronOS task.
 
-How it works: Validates arguments, computes effective stack size, asks the port for slot size, allocates from `g_taskStackPool`, initializes TCB fields, builds the initial CPU stack frame, and updates stack metrics.
+How it works: Validates arguments, computes effective stack size, asks the port for slot size, reuses a stopped task stack when possible, allocates from `g_taskStackPool` when needed, initializes TCB fields, builds the initial CPU stack frame, and updates stack metrics.
 
 Return values:
 
 | Return | Meaning |
-| ---: | --- |
-| `>= 0` | Task index. |
-| `-1` | Validation or allocation failure. |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Task created. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Invalid function, name, stack size, or output pointer. |
+| `KRONOS_STATUS_IN_USE` | Duplicate active task name. |
+| `KRONOS_STATUS_NO_MEMORY` | No task slot or stack pool space is available. |
+
+#### `Kronos_TaskDeleteInternal`
+
+```c
+kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId);
+```
+
+Visibility: Internal task API.
+
+Inputs:
+
+| Input | Description |
+| --- | --- |
+| `taskId` | Task ID to delete. |
+
+Outputs: Stops the task and cleans runtime-owned resources.
+
+What it does: Kernel implementation of task deletion.
+
+How it works: Rejects the idle task, marks the target deleting, cleans mailbox queues and registered mutex ownership, clears runtime wait/service state, clears the task name/function, and marks the slot stopped.
+
+Return values: `KRONOS_STATUS_OK`, `KRONOS_STATUS_NOT_FOUND`, or `KRONOS_STATUS_INVALID_ARGUMENT`.
+
+#### `Kronos_TaskPauseInternal`
+
+```c
+kronos_status_e Kronos_TaskPauseInternal(kronos_task_id_t taskId);
+```
+
+Visibility: Internal task API.
+
+What it does: Kernel implementation of task pause.
+
+Return values: `KRONOS_STATUS_OK`, `KRONOS_STATUS_INVALID_ARGUMENT`, or `KRONOS_STATUS_INVALID_STATE`.
+
+#### `Kronos_TaskResumeInternal`
+
+```c
+kronos_status_e Kronos_TaskResumeInternal(kronos_task_id_t taskId);
+```
+
+Visibility: Internal task API.
+
+What it does: Kernel implementation of task resume.
+
+Return values: `KRONOS_STATUS_OK`, `KRONOS_STATUS_NOT_FOUND`, or `KRONOS_STATUS_INVALID_STATE`.
 
 #### `Kronos_TaskUpdateAllStats`
 
@@ -1933,6 +2115,28 @@ How it works: Clears each task ingress state and rebuilds the global free list o
 
 Return values: None.
 
+#### `Kronos_ChannelsCleanupTask`
+
+```c
+void Kronos_ChannelsCleanupTask(kronos_task_id_t taskId);
+```
+
+Visibility: Internal channel API.
+
+Inputs:
+
+| Input | Description |
+| --- | --- |
+| `taskId` | Task ID being deleted or quarantined. |
+
+Outputs: Releases matching queued mail slots.
+
+What it does: Removes pending messages where the task is either sender or receiver.
+
+How it works: Walks each ingress queue, unlinks matching mail slots, decrements pending counts, and returns slots to the global free list.
+
+Return values: None.
+
 #### `Kronos_ChannelsIngressReceive`
 
 ```c
@@ -2026,6 +2230,44 @@ How it works: Validates payload, counts broadcast targets, checks that enough fr
 Return values: Written into `outcome->status`.
 
 ### Synchronization Internals
+
+#### `Kronos_SyncResetState`
+
+```c
+void Kronos_SyncResetState(void);
+```
+
+Visibility: Internal sync API.
+
+Inputs: None.
+
+Outputs: Clears the internal mutex and semaphore registries.
+
+What it does: Resets synchronization bookkeeping during `RTOS_Init()`.
+
+Return values: None.
+
+#### `Kronos_SyncCleanupTask`
+
+```c
+void Kronos_SyncCleanupTask(kronos_task_id_t taskId);
+```
+
+Visibility: Internal sync API.
+
+Inputs:
+
+| Input | Description |
+| --- | --- |
+| `taskId` | Task ID being deleted or quarantined. |
+
+Outputs: Releases registered mutexes owned by the task.
+
+What it does: Prevents a deleted or faulted task from leaving a registered mutex permanently owned.
+
+How it works: Scans registered mutexes, clears ownership for mutexes owned by `taskId`, and wakes one waiter if present.
+
+Return values: None.
 
 #### `Kronos_SyncMutexLock`
 
@@ -2185,6 +2427,32 @@ How it works: Reads fault status/address, clears the fault status bits, calls th
 
 ### Public Data Structures
 
+#### `kronos_task_id_t`
+
+```c
+typedef uint32_t kronos_task_id_t;
+```
+
+Purpose: Task ID type used by task control APIs.
+
+Notes:
+
+- `KRONOS_INVALID_TASK_ID` marks an invalid or unset task ID.
+- Task IDs are task table indexes and are kept stable while the task slot exists.
+
+#### `kronos_driver_init_fn_t`
+
+```c
+typedef kronos_status_e (*kronos_driver_init_fn_t)(void *context);
+```
+
+Purpose: Function pointer type for privileged driver initialization requests.
+
+Notes:
+
+- Used with `RTOS_DriverInit()`.
+- The function should return a `kronos_status_e`.
+
 #### `kronos_mutex_t`
 
 ```c
@@ -2192,6 +2460,7 @@ typedef struct
 {
     uint32_t owner_task_id;
     uint32_t lock_count;
+    uint32_t initialized;
 } kronos_mutex_t;
 ```
 
@@ -2203,6 +2472,7 @@ Fields:
 | --- | --- |
 | `owner_task_id` | Current owner task ID, or `KRONOS_INVALID_TASK_ID` when unlocked. |
 | `lock_count` | Recursive lock depth. Zero means unlocked. |
+| `initialized` | Internal marker set by `RTOS_MutexInit()`. |
 
 Notes:
 
@@ -2216,6 +2486,7 @@ typedef struct
 {
     uint32_t count;
     uint32_t max_count;
+    uint32_t initialized;
 } kronos_semaphore_t;
 ```
 
@@ -2227,6 +2498,7 @@ Fields:
 | --- | --- |
 | `count` | Current available tokens. |
 | `max_count` | Maximum allowed tokens. |
+| `initialized` | Internal marker set by `RTOS_SemaphoreInit()`. |
 
 Notes:
 
@@ -2358,7 +2630,7 @@ Notes:
 ```c
 typedef struct
 {
-    int32_t status;
+    kronos_status_e status;
     uint32_t switch_required;
 } kronos_service_outcome_t;
 ```
@@ -2369,8 +2641,50 @@ Fields:
 
 | Field | Meaning |
 | --- | --- |
-| `status` | Service result, usually a `kronos_status_e`. |
+| `status` | Service result. |
 | `switch_required` | Non-zero when the scheduler should switch after the service. |
+
+#### `kronos_task_create_request_t`
+
+```c
+typedef struct
+{
+    void (*task_function)(void);
+    const char *task_name;
+    kronos_task_id_t *task_id_ptr;
+    uint32_t stack_words;
+} kronos_task_create_request_t;
+```
+
+Purpose: Internal request object for runtime task creation.
+
+Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `task_function` | Task entry function. |
+| `task_name` | New task name. |
+| `task_id_ptr` | Output pointer for the created task ID. |
+| `stack_words` | Requested usable stack size in words. |
+
+#### `kronos_driver_init_request_t`
+
+```c
+typedef struct
+{
+    kronos_driver_init_fn_t init_function;
+    void *context;
+} kronos_driver_init_request_t;
+```
+
+Purpose: Internal request object for privileged driver initialization.
+
+Fields:
+
+| Field | Meaning |
+| --- | --- |
+| `init_function` | Function to execute in kernel context. |
+| `context` | Pointer passed to the init function. |
 
 #### `kronos_channel_request_t`
 
@@ -2407,7 +2721,7 @@ typedef struct
     void *wait_object_ptr;
     void *service_object_ptr;
     uint32_t service_parameter;
-    int32_t service_result;
+    kronos_status_e service_result;
     kronos_wait_reason_e wait_reason;
     kronos_service_e service_request;
 } kronos_task_runtime_t;
@@ -2533,6 +2847,11 @@ See [Status Codes](#status-codes).
 | `KRONOS_SERVICE_INGRESS_WAIT` | Wait for ingress message. |
 | `KRONOS_SERVICE_EGRESS_SEND` | Send one message. |
 | `KRONOS_SERVICE_EGRESS_BROADCAST` | Broadcast one message. |
+| `KRONOS_SERVICE_TASK_CREATE` | Create an application task. |
+| `KRONOS_SERVICE_TASK_DELETE` | Delete an application task. |
+| `KRONOS_SERVICE_TASK_PAUSE` | Pause an application task. |
+| `KRONOS_SERVICE_TASK_RESUME` | Resume a paused task. |
+| `KRONOS_SERVICE_DRIVER_INIT` | Run privileged driver initialization. |
 
 ## Constants and Configuration Macros
 
@@ -2555,6 +2874,12 @@ See [Status Codes](#status-codes).
 | --- | ---: | --- |
 | `KRONOS_INGRESS_SLOT_COUNT` | `16U` | Number of global mail slots. Can be overridden before including/building. |
 | `KRONOS_MESSAGE_MAX_PAYLOAD_BYTES` | `32U` | Maximum payload bytes per message. Can be overridden before including/building. |
+
+### Synchronization Limits
+
+| Macro | Default | Meaning |
+| --- | ---: | --- |
+| `KRONOS_SYNC_REGISTRY_SIZE` | `16U` | Number of mutex and semaphore pointers tracked for validation and cleanup. |
 
 ### Fault Flags
 
@@ -2600,7 +2925,7 @@ These are declared in `kronos_core.h`.
 | Variable | Type | Meaning |
 | --- | --- | --- |
 | `g_tasks` | `TCB_t[MAX_TASKS]` | Global task table. |
-| `g_numTasks` | `uint32_t` | Number of created tasks. |
+| `g_numTasks` | `uint32_t` | Number of task table slots currently in use, including stopped reusable slots below the high-water mark. |
 | `g_currentTask` | `uint32_t` | Index of the current task. |
 
 Application code should prefer `RTOS_GetTaskTable()` and `RTOS_GetTaskCount()` instead of direct access.
@@ -2643,10 +2968,12 @@ static void blink_task(void)
 
 int main(void)
 {
+    kronos_task_id_t blink_task_id;
+
     board_init();
 
     RTOS_Init();
-    if (RTOS_CreateTask(blink_task, 64U, "blink") < 0)
+    if (RTOS_CreateTask(blink_task, 64U, "blink", &blink_task_id) != KRONOS_STATUS_OK)
     {
         for (;;)
         {
@@ -2761,6 +3088,84 @@ void app_init(void)
 }
 ```
 
+### Runtime Task Creation and Deletion
+
+```c
+#include "kronos_core.h"
+
+static kronos_task_id_t worker_id = KRONOS_INVALID_TASK_ID;
+
+static void worker_task(void)
+{
+    for (;;)
+    {
+        do_worker_step();
+        RTOS_Delay(20U);
+    }
+}
+
+static void manager_task(void)
+{
+    for (;;)
+    {
+        if (should_start_worker() && (worker_id == KRONOS_INVALID_TASK_ID))
+        {
+            if (RTOS_CreateTask(worker_task, 96U, "worker", &worker_id) != KRONOS_STATUS_OK)
+            {
+                worker_id = KRONOS_INVALID_TASK_ID;
+            }
+        }
+
+        if (should_stop_worker() && (worker_id != KRONOS_INVALID_TASK_ID))
+        {
+            if (RTOS_TaskDelete(worker_id) == KRONOS_STATUS_OK)
+            {
+                worker_id = KRONOS_INVALID_TASK_ID;
+            }
+        }
+
+        RTOS_Delay(100U);
+    }
+}
+```
+
+### Privileged Driver Initialization
+
+```c
+#include "kronos_core.h"
+
+typedef struct
+{
+    uint32_t baudrate;
+} uart_init_context_t;
+
+static kronos_status_e uart_init_privileged(void *context)
+{
+    const uart_init_context_t *uart_context = (const uart_init_context_t *)context;
+
+    if (uart_context == NULL)
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    uart_hw_init(uart_context->baudrate);
+    return KRONOS_STATUS_OK;
+}
+
+static void comms_task(void)
+{
+    uart_init_context_t uart_context = { 115200U };
+
+    (void)RTOS_DriverInit(uart_init_privileged, &uart_context);
+
+    for (;;)
+    {
+        comms_step();
+        RTOS_Delay(10U);
+    }
+}
+```
+
 ### Task Stack Monitoring
 
 ```c
@@ -2775,10 +3180,13 @@ static void monitor_task(void)
 
         for (uint32_t i = 0U; i < count; ++i)
         {
-            report_stack(tasks[i].task_name,
-                         tasks[i].stack_used_words,
-                         tasks[i].stack_free_words,
-                         tasks[i].fault_flags);
+            if (tasks[i].task_name != NULL)
+            {
+                report_stack(tasks[i].task_name,
+                             tasks[i].stack_used_words,
+                             tasks[i].stack_free_words,
+                             tasks[i].fault_flags);
+            }
         }
 
         RTOS_Delay(1000U);

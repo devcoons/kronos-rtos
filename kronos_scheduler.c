@@ -54,6 +54,8 @@ static void kronos_scheduler_clear_service_state(kronos_task_runtime_t *runtimeS
 static void kronos_scheduler_init_outcome(kronos_service_outcome_t *outcome);
 static int32_t kronos_scheduler_select_next_ready_task(uint32_t startTask);
 static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr);
+static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_request_t *request);
+static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init_request_t *request);
 
 /******************************************************************************
 * Definition | Static Functions
@@ -114,6 +116,30 @@ static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr)
 
     Scheduler_RoundRobin();
     return g_tasks[g_currentTask].stack_top_ptr;
+}
+
+static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_request_t *request)
+{
+    if ((request == NULL) || (request->task_id_ptr == NULL))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    return Kronos_TaskCreateInternal(request->task_function,
+                                     request->stack_words,
+                                     request->task_name,
+                                     TASK_KIND_APPLICATION,
+                                     request->task_id_ptr);
+}
+
+static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init_request_t *request)
+{
+    if ((request == NULL) || (request->init_function == NULL))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    return request->init_function(request->context);
 }
 
 /******************************************************************************
@@ -199,6 +225,27 @@ void RTOS_ForceSwitch(void)
     Kronos_SchedulerRequestService(KRONOS_SERVICE_FORCE_SWITCH, NULL, 0U);
 }
 
+kronos_status_e RTOS_DriverInit(kronos_driver_init_fn_t initFunction, void *context)
+{
+    kronos_driver_init_request_t request;
+
+    if (initFunction == NULL)
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    if ((g_schedulerStarted == 0U) || (g_currentTask >= g_numTasks))
+    {
+        return initFunction(context);
+    }
+
+    request.init_function = initFunction;
+    request.context = context;
+
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_DRIVER_INIT, &request, 0U);
+    return g_taskRuntime[g_currentTask].service_result;
+}
+
 void Scheduler_RoundRobin(void)
 {
     int32_t nextTaskIndex;
@@ -278,21 +325,27 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
 {
     TCB_t *currentTcb;
     const kronos_channel_request_t *channelRequest;
+    const kronos_task_create_request_t *taskCreateRequest;
+    const kronos_driver_init_request_t *driverInitRequest;
     kronos_task_runtime_t *runtimeState;
     kronos_service_outcome_t outcome;
+    uint32_t serviceParameter;
 
     currentTcb = &g_tasks[g_currentTask];
     runtimeState = &g_taskRuntime[g_currentTask];
     kronos_scheduler_store_current_context(savedStackPtr);
     kronos_scheduler_init_outcome(&outcome);
     channelRequest = (const kronos_channel_request_t *)runtimeState->service_object_ptr;
+    taskCreateRequest = (const kronos_task_create_request_t *)runtimeState->service_object_ptr;
+    driverInitRequest = (const kronos_driver_init_request_t *)runtimeState->service_object_ptr;
+    serviceParameter = runtimeState->service_parameter;
 
     switch (runtimeState->service_request)
     {
         case KRONOS_SERVICE_DELAY:
-            if (runtimeState->service_parameter > 0U)
+            if (serviceParameter > 0U)
             {
-                currentTcb->remaining_delay = runtimeState->service_parameter;
+                currentTcb->remaining_delay = serviceParameter;
                 currentTcb->task_state = TASK_STATE_TIME_DELAY;
             }
             kronos_scheduler_clear_service_state(runtimeState);
@@ -362,6 +415,32 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
 
         case KRONOS_SERVICE_EGRESS_BROADCAST:
             Kronos_ChannelsEgressBroadcast(channelRequest, &outcome);
+            break;
+
+        case KRONOS_SERVICE_TASK_CREATE:
+            outcome.status = kronos_scheduler_create_task(taskCreateRequest);
+            outcome.switch_required = 0U;
+            break;
+
+        case KRONOS_SERVICE_TASK_DELETE:
+            outcome.status = Kronos_TaskDeleteInternal((kronos_task_id_t)serviceParameter);
+            outcome.switch_required = ((outcome.status == KRONOS_STATUS_OK) &&
+                                       (serviceParameter == g_currentTask)) ? 1U : 0U;
+            break;
+
+        case KRONOS_SERVICE_TASK_PAUSE:
+            outcome.status = Kronos_TaskPauseInternal((kronos_task_id_t)serviceParameter);
+            outcome.switch_required = 0U;
+            break;
+
+        case KRONOS_SERVICE_TASK_RESUME:
+            outcome.status = Kronos_TaskResumeInternal((kronos_task_id_t)serviceParameter);
+            outcome.switch_required = (outcome.status == KRONOS_STATUS_OK) ? 1U : 0U;
+            break;
+
+        case KRONOS_SERVICE_DRIVER_INIT:
+            outcome.status = kronos_scheduler_run_driver_init(driverInitRequest);
+            outcome.switch_required = 0U;
             break;
 
         case KRONOS_SERVICE_FORCE_SWITCH:

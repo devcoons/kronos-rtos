@@ -33,6 +33,8 @@ a separate license is required. Contact:
 
 #include "kronos_internal.h"
 
+#include <stddef.h>
+
 /******************************************************************************
 * Definition | Public Functions
 ******************************************************************************/
@@ -41,18 +43,34 @@ void RTOS_Init(void)
 {
     Kronos_SchedulerResetState();
     Kronos_TasksResetState();
+    Kronos_SyncResetState();
     Kronos_ChannelsResetState();
     Kronos_TaskUpdateAllStats();
 }
 
-int32_t RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName)
+kronos_status_e RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, kronos_task_id_t *taskId)
 {
-    if (g_schedulerStarted != 0U)
+    kronos_task_create_request_t request;
+
+    if (taskId == NULL)
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    return Kronos_TaskCreateInternal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION);
+    *taskId = KRONOS_INVALID_TASK_ID;
+
+    if (g_schedulerStarted == 0U)
+    {
+        return Kronos_TaskCreateInternal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, taskId);
+    }
+
+    request.task_function = taskFunction;
+    request.task_name = taskName;
+    request.task_id_ptr = taskId;
+    request.stack_words = stackWords;
+
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_CREATE, &request, 0U);
+    return g_taskRuntime[g_currentTask].service_result;
 }
 
 const TCB_t *RTOS_GetTaskTable(void)

@@ -70,14 +70,33 @@ typedef enum
 	KRONOS_SERVICE_INGRESS_RECEIVE,
 	KRONOS_SERVICE_INGRESS_WAIT,
 	KRONOS_SERVICE_EGRESS_SEND,
-	KRONOS_SERVICE_EGRESS_BROADCAST
+	KRONOS_SERVICE_EGRESS_BROADCAST,
+	KRONOS_SERVICE_TASK_CREATE,
+	KRONOS_SERVICE_TASK_DELETE,
+	KRONOS_SERVICE_TASK_PAUSE,
+	KRONOS_SERVICE_TASK_RESUME,
+	KRONOS_SERVICE_DRIVER_INIT
 } kronos_service_e;
 
 typedef struct
 {
-	int32_t status;
+	kronos_status_e status;
 	uint32_t switch_required;
 } kronos_service_outcome_t;
+
+typedef struct
+{
+	void (*task_function)(void);
+	const char *task_name;
+	kronos_task_id_t *task_id_ptr;
+	uint32_t stack_words;
+} kronos_task_create_request_t;
+
+typedef struct
+{
+	kronos_driver_init_fn_t init_function;
+	void *context;
+} kronos_driver_init_request_t;
 
 typedef struct
 {
@@ -94,7 +113,7 @@ typedef struct
 	void *wait_object_ptr;
 	void *service_object_ptr;
 	uint32_t service_parameter;
-	int32_t service_result;
+	kronos_status_e service_result;
 	kronos_wait_reason_e wait_reason;
 	kronos_service_e service_request;
 } kronos_task_runtime_t;
@@ -111,7 +130,10 @@ extern kronos_task_runtime_t g_taskRuntime[MAX_TASKS];
 ******************************************************************************/
 
 void Kronos_TasksResetState(void);
-int32_t Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind);
+kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind, kronos_task_id_t *taskId);
+kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId);
+kronos_status_e Kronos_TaskPauseInternal(kronos_task_id_t taskId);
+kronos_status_e Kronos_TaskResumeInternal(kronos_task_id_t taskId);
 void Kronos_TaskUpdateAllStats(void);
 void Kronos_TaskUpdateStackMetrics(TCB_t *tcb, const uint32_t *stackPtr);
 kronos_stack_check_e Kronos_TaskCheckStack(TCB_t *tcb, const uint32_t *stackPtr);
@@ -125,10 +147,13 @@ uint32_t Kronos_TaskSelectStartTask(void);
 void Kronos_TaskActivate(uint32_t taskIndex);
 
 void Kronos_ChannelsResetState(void);
+void Kronos_ChannelsCleanupTask(kronos_task_id_t taskId);
 
 void Kronos_SchedulerResetState(void);
 void Kronos_SchedulerRequestService(kronos_service_e serviceRequest, void *serviceObject, uint32_t serviceParameter);
 
+void Kronos_SyncResetState(void);
+void Kronos_SyncCleanupTask(kronos_task_id_t taskId);
 void Kronos_SyncMutexLock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome);
 void Kronos_SyncMutexUnlock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome);
 void Kronos_SyncSemaphoreTake(TCB_t *currentTcb, kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome);

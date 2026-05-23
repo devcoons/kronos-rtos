@@ -67,6 +67,10 @@ static uint32_t *kronos_allocate_stack_region(uint32_t slotWords);
 static uint32_t kronos_clamp_warning_margin(uint32_t requestedStackWords);
 static uint32_t kronos_calculate_stack_used_words(const TCB_t *tcb, const uint32_t *stackPtr);
 static uint32_t kronos_task_get_index(const TCB_t *tcb);
+static uint32_t kronos_task_has_name(const TCB_t *tcb);
+static uint32_t kronos_task_is_reusable(const TCB_t *tcb);
+static int32_t kronos_task_find_slot(uint32_t requestedSlotWords, uint32_t *reuseExistingStack);
+static void kronos_task_clear_runtime(uint32_t taskIndex);
 
 /******************************************************************************
 * Definition | Static Functions
@@ -87,7 +91,7 @@ static void kronos_idle_task(void)
 
 static void kronos_task_exit(void)
 {
-    g_tasks[g_currentTask].task_state = TASK_STATE_STOPPED;
+    (void)RTOS_TaskDelete((kronos_task_id_t)g_currentTask);
 
     for (;;)
     {
@@ -166,40 +170,135 @@ static uint32_t kronos_task_get_index(const TCB_t *tcb)
     return (uint32_t)(tcb - &g_tasks[0]);
 }
 
+static uint32_t kronos_task_has_name(const TCB_t *tcb)
+{
+    if ((tcb == NULL) || (tcb->task_name == NULL))
+    {
+        return 0U;
+    }
+
+    return (tcb->task_state != TASK_STATE_UNKNOWN) &&
+           (tcb->task_state != TASK_STATE_DELETING) &&
+           (tcb->task_state != TASK_STATE_STOPPED);
+}
+
+static uint32_t kronos_task_is_reusable(const TCB_t *tcb)
+{
+    if (tcb == NULL)
+    {
+        return 0U;
+    }
+
+    return (tcb->task_kind != TASK_KIND_IDLE) &&
+           ((tcb->task_state == TASK_STATE_UNKNOWN) ||
+            (tcb->task_state == TASK_STATE_STOPPED));
+}
+
+static int32_t kronos_task_find_slot(uint32_t requestedSlotWords, uint32_t *reuseExistingStack)
+{
+    int32_t firstReusableSlot;
+    uint32_t taskIndex;
+
+    firstReusableSlot = -1;
+    if (reuseExistingStack != NULL)
+    {
+        *reuseExistingStack = 0U;
+    }
+
+    for (taskIndex = 0U; taskIndex < g_numTasks; ++taskIndex)
+    {
+        if (kronos_task_is_reusable(&g_tasks[taskIndex]) != 0U)
+        {
+            if (firstReusableSlot < 0)
+            {
+                firstReusableSlot = (int32_t)taskIndex;
+            }
+
+            if ((g_tasks[taskIndex].stack_slot_start_ptr != NULL) &&
+                (g_tasks[taskIndex].stack_slot_words >= requestedSlotWords))
+            {
+                if (reuseExistingStack != NULL)
+                {
+                    *reuseExistingStack = 1U;
+                }
+                return (int32_t)taskIndex;
+            }
+        }
+    }
+
+    if (g_numTasks < MAX_TASKS)
+    {
+        return (int32_t)g_numTasks;
+    }
+
+    if (firstReusableSlot >= 0)
+    {
+        return firstReusableSlot;
+    }
+
+    return -1;
+}
+
+static void kronos_task_clear_runtime(uint32_t taskIndex)
+{
+    if (taskIndex >= MAX_TASKS)
+    {
+        return;
+    }
+
+    g_taskRuntime[taskIndex].wait_object_ptr = NULL;
+    g_taskRuntime[taskIndex].service_object_ptr = NULL;
+    g_taskRuntime[taskIndex].service_parameter = 0U;
+    g_taskRuntime[taskIndex].service_result = KRONOS_STATUS_OK;
+    g_taskRuntime[taskIndex].wait_reason = KRONOS_WAIT_NONE;
+    g_taskRuntime[taskIndex].service_request = KRONOS_SERVICE_NONE;
+}
+
 /******************************************************************************
 * Definition | Public Functions
 ******************************************************************************/
 
 void Kronos_TasksResetState(void)
 {
+    kronos_task_id_t idleTaskId;
+
     memset(g_tasks, 0, sizeof(g_tasks));
     memset(g_taskRuntime, 0, sizeof(g_taskRuntime));
     g_numTasks = 0U;
     g_currentTask = 0U;
     g_stackPoolWordsUsed = 0U;
 
-    (void)Kronos_TaskCreateInternal(kronos_idle_task, IDLE_TASK_STACK_SIZE_WORDS, "kronos_idle", TASK_KIND_IDLE);
+    (void)Kronos_TaskCreateInternal(kronos_idle_task, IDLE_TASK_STACK_SIZE_WORDS, "kronos_idle", TASK_KIND_IDLE, &idleTaskId);
 }
 
-int32_t Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind)
+kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind, kronos_task_id_t *taskId)
 {
     TCB_t *tcb;
     uint32_t *stackBase;
     uint32_t *stackCursor;
     uint32_t effectiveStackWords;
     uint32_t slotWords;
+    uint32_t requestedSlotWords;
     uint32_t warningWords;
     uint32_t regIndex;
+    uint32_t reuseExistingStack;
     int32_t taskIndex;
 
-    if ((taskFunction == NULL) || (taskName == NULL) || (taskName[0] == '\0') || (g_numTasks >= MAX_TASKS))
+    if (taskId == NULL)
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    *taskId = KRONOS_INVALID_TASK_ID;
+
+    if ((taskFunction == NULL) || (taskName == NULL) || (taskName[0] == '\0'))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
     if (Kronos_TaskFindByName(taskName) >= 0)
     {
-        return -1;
+        return KRONOS_STATUS_IN_USE;
     }
 
     effectiveStackWords = (stackWords == 0U) ? DEFAULT_STACK_SIZE_WORDS : stackWords;
@@ -207,21 +306,35 @@ int32_t Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWord
 
     if (effectiveStackWords < MIN_STACK_SIZE_WORDS)
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    slotWords = Kronos_PortComputeTaskSlotWords(effectiveStackWords);
-    stackBase = kronos_allocate_stack_region(slotWords);
-    if (stackBase == NULL)
+    requestedSlotWords = Kronos_PortComputeTaskSlotWords(effectiveStackWords);
+    taskIndex = kronos_task_find_slot(requestedSlotWords, &reuseExistingStack);
+    if (taskIndex < 0)
     {
-        return -1;
+        return KRONOS_STATUS_NO_MEMORY;
     }
 
-    taskIndex = (int32_t)g_numTasks;
-    tcb = &g_tasks[g_numTasks];
+    tcb = &g_tasks[(uint32_t)taskIndex];
+    if (reuseExistingStack != 0U)
+    {
+        stackBase = tcb->stack_slot_start_ptr;
+        slotWords = tcb->stack_slot_words;
+    }
+    else
+    {
+        slotWords = requestedSlotWords;
+        stackBase = kronos_allocate_stack_region(slotWords);
+        if (stackBase == NULL)
+        {
+            return KRONOS_STATUS_NO_MEMORY;
+        }
+    }
 
     memset(tcb, 0, sizeof(*tcb));
     memset(stackBase, (int)KRONOS_STACK_FILL_BYTE, slotWords * sizeof(uint32_t));
+    kronos_task_clear_runtime((uint32_t)taskIndex);
 
     warningWords = kronos_clamp_warning_margin(effectiveStackWords);
 
@@ -260,48 +373,125 @@ int32_t Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWord
     tcb->stack_top_ptr = stackCursor;
     Kronos_TaskUpdateStackMetrics(tcb, stackCursor);
 
-    g_numTasks++;
+    if ((uint32_t)taskIndex == g_numTasks)
+    {
+        g_numTasks++;
+    }
 
-    return taskIndex;
+    *taskId = (kronos_task_id_t)taskIndex;
+    return KRONOS_STATUS_OK;
 }
 
-int32_t RTOS_TaskPause(uint32_t taskId)
+kronos_status_e RTOS_TaskDelete(kronos_task_id_t taskId)
+{
+    if (g_schedulerStarted == 0U)
+    {
+        return Kronos_TaskDeleteInternal(taskId);
+    }
+
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_DELETE, NULL, taskId);
+    return g_taskRuntime[g_currentTask].service_result;
+}
+
+kronos_status_e RTOS_TaskPause(kronos_task_id_t taskId)
+{
+    if (g_schedulerStarted == 0U)
+    {
+        return Kronos_TaskPauseInternal(taskId);
+    }
+
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_PAUSE, NULL, taskId);
+    return g_taskRuntime[g_currentTask].service_result;
+}
+
+kronos_status_e RTOS_TaskResume(kronos_task_id_t taskId)
+{
+    if (g_schedulerStarted == 0U)
+    {
+        return Kronos_TaskResumeInternal(taskId);
+    }
+
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_RESUME, NULL, taskId);
+    return g_taskRuntime[g_currentTask].service_result;
+}
+
+kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId)
+{
+    TCB_t *tcb;
+
+    if (taskId >= g_numTasks)
+    {
+        return KRONOS_STATUS_NOT_FOUND;
+    }
+
+    tcb = &g_tasks[taskId];
+    if (tcb->task_kind == TASK_KIND_IDLE)
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    if ((tcb->task_state == TASK_STATE_UNKNOWN) ||
+        (tcb->task_state == TASK_STATE_STOPPED) ||
+        (tcb->task_state == TASK_STATE_DELETING))
+    {
+        return KRONOS_STATUS_NOT_FOUND;
+    }
+
+    tcb->task_state = TASK_STATE_DELETING;
+    tcb->remaining_delay = 0U;
+
+    Kronos_ChannelsCleanupTask(taskId);
+    Kronos_SyncCleanupTask(taskId);
+    kronos_task_clear_runtime(taskId);
+
+    tcb->task_fn = NULL;
+    tcb->task_name = NULL;
+    tcb->fault_flags = KRONOS_TASK_FAULT_NONE;
+    tcb->fault_address = 0U;
+    tcb->remaining_delay = 0U;
+    tcb->stack_top_ptr = tcb->stack_slot_end_ptr;
+    tcb->task_state = TASK_STATE_STOPPED;
+
+    return KRONOS_STATUS_OK;
+}
+
+kronos_status_e Kronos_TaskPauseInternal(kronos_task_id_t taskId)
 {
     if ((taskId >= g_numTasks) || (taskId == g_currentTask))
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
     if (g_tasks[taskId].task_kind == TASK_KIND_IDLE)
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
     if (g_tasks[taskId].task_state == TASK_STATE_PAUSED)
     {
-        return 0;
+        return KRONOS_STATUS_OK;
     }
 
     if ((g_tasks[taskId].task_state != TASK_STATE_READY) &&
         (g_tasks[taskId].task_state != TASK_STATE_TIME_DELAY))
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_STATE;
     }
 
     g_tasks[taskId].task_state = TASK_STATE_PAUSED;
-    return 0;
+    return KRONOS_STATUS_OK;
 }
 
-int32_t RTOS_TaskResume(uint32_t taskId)
+kronos_status_e Kronos_TaskResumeInternal(kronos_task_id_t taskId)
 {
     if (taskId >= g_numTasks)
     {
-        return -1;
+        return KRONOS_STATUS_NOT_FOUND;
     }
 
     if (g_tasks[taskId].task_state != TASK_STATE_PAUSED)
     {
-        return -1;
+        return KRONOS_STATUS_INVALID_STATE;
     }
 
     if (g_tasks[taskId].remaining_delay > 0U)
@@ -317,7 +507,7 @@ int32_t RTOS_TaskResume(uint32_t taskId)
         }
     }
 
-    return 0;
+    return KRONOS_STATUS_OK;
 }
 
 void Kronos_TaskUpdateStackMetrics(TCB_t *tcb, const uint32_t *stackPtr)
@@ -365,11 +555,13 @@ void Kronos_TaskQuarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFl
 {
     kronos_task_runtime_t *runtimeState;
     uint32_t normalizedFaultFlags;
+    uint32_t taskIndex;
     uintptr_t faultAddressValue;
     uintptr_t stackStart;
     uintptr_t stackEnd;
 
-    runtimeState = &g_taskRuntime[kronos_task_get_index(tcb)];
+    taskIndex = kronos_task_get_index(tcb);
+    runtimeState = &g_taskRuntime[taskIndex];
     normalizedFaultFlags = faultFlags;
     faultAddressValue = (uintptr_t)faultAddress;
     stackStart = (uintptr_t)tcb->stack_slot_start_ptr;
@@ -415,6 +607,9 @@ void Kronos_TaskQuarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFl
             Kronos_TaskUpdateStackMetrics(tcb, faultStackPtr);
         }
     }
+
+    Kronos_ChannelsCleanupTask((kronos_task_id_t)taskIndex);
+    Kronos_SyncCleanupTask((kronos_task_id_t)taskIndex);
 }
 
 int32_t Kronos_TaskFindNextReady(task_kind_e taskKind, uint32_t startTask)
@@ -449,7 +644,8 @@ int32_t Kronos_TaskFindByName(const char *taskName)
 
     for (taskIndex = 0U; taskIndex < g_numTasks; ++taskIndex)
     {
-        if ((g_tasks[taskIndex].task_name != NULL) && (strcmp(g_tasks[taskIndex].task_name, taskName) == 0))
+        if ((kronos_task_has_name(&g_tasks[taskIndex]) != 0U) &&
+            (strcmp(g_tasks[taskIndex].task_name, taskName) == 0))
         {
             return (int32_t)taskIndex;
         }
