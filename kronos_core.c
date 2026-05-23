@@ -1,6 +1,7 @@
 /*!
 @file   kronos_core.c
 @brief  Source file of KronOS (RTOS) Core functionalities
+@t.odo  -
 
 ---------------------------------------------------------------------------
 GNU Affero General Public License v3.0
@@ -26,12 +27,21 @@ a separate license is required. Contact:
 - Email: i_-_-_s@outlook.com
 */
 
+/******************************************************************************
+* Includes
+******************************************************************************/
+
 #include "kronos_internal.h"
+
+/******************************************************************************
+* Definition | Public Functions
+******************************************************************************/
 
 void RTOS_Init(void)
 {
     Kronos_SchedulerResetState();
     Kronos_TasksResetState();
+    Kronos_ChannelsResetState();
     Kronos_TaskUpdateAllStats();
 }
 
@@ -54,3 +64,7 @@ uint32_t RTOS_GetTaskCount(void)
 {
     return g_numTasks;
 }
+
+/******************************************************************************
+* EOF - NO CODE AFTER THIS LINE
+******************************************************************************/

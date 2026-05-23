@@ -1,6 +1,7 @@
 /*!
 @file   kronos_core.h
 @brief  Header file of KronOS (RTOS) Core functionalities
+@t.odo  -
 
 ---------------------------------------------------------------------------
 GNU Affero General Public License v3.0
@@ -26,10 +27,22 @@ a separate license is required. Contact:
 - Email: i_-_-_s@outlook.com
 */
 
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
+
 #ifndef KRONOS_CORE_H
 #define KRONOS_CORE_H
 
+/******************************************************************************
+* Includes
+******************************************************************************/
+
 #include <stdint.h>
+
+/******************************************************************************
+* Enumerations, Structures & Variables
+******************************************************************************/
 
 #define MAX_APPLICATION_TASKS         10U
 #define SYSTEM_TASK_COUNT             1U
@@ -38,13 +51,22 @@ a separate license is required. Contact:
 #define MIN_STACK_SIZE_WORDS          32U
 #define IDLE_TASK_STACK_SIZE_WORDS    64U
 #define STACK_POOL_SIZE_WORDS         2048U
-#define CPU_FREQ_HZ                   4000000UL
 #define TICK_FREQ_HZ                  1000UL
+
+#ifndef KRONOS_INGRESS_SLOT_COUNT
+#define KRONOS_INGRESS_SLOT_COUNT     16U
+#endif
+
+#ifndef KRONOS_MESSAGE_MAX_PAYLOAD_BYTES
+#define KRONOS_MESSAGE_MAX_PAYLOAD_BYTES 32U
+#endif
 
 #define KRONOS_TASK_FAULT_NONE            0UL
 #define KRONOS_TASK_FAULT_STACK_WARNING   (1UL << 0)
 #define KRONOS_TASK_FAULT_STACK_OVERFLOW  (1UL << 1)
 #define KRONOS_TASK_FAULT_MEMORY_ACCESS   (1UL << 2)
+
+#define KRONOS_INVALID_TASK_ID UINT32_MAX
 
 typedef enum
 {
@@ -67,6 +89,50 @@ typedef enum
     TASK_KIND_IDLE
 } task_kind_e;
 
+typedef enum
+{
+    KRONOS_STATUS_OK = 0,
+    KRONOS_STATUS_ERROR = -1,
+    KRONOS_STATUS_INVALID_ARGUMENT = -2,
+    KRONOS_STATUS_NOT_OWNER = -3,
+    KRONOS_STATUS_SCHEDULER_SUSPENDED = -4,
+    KRONOS_STATUS_OVERFLOW = -5,
+    KRONOS_STATUS_NOT_FOUND = -6,
+    KRONOS_STATUS_EMPTY = -7,
+    KRONOS_STATUS_TOO_LARGE = -8,
+    KRONOS_STATUS_MAILBOX_FULL = -9
+} kronos_status_e;
+
+typedef struct
+{
+    uint32_t owner_task_id;
+    uint32_t lock_count;
+} kronos_mutex_t;
+
+typedef struct
+{
+    uint32_t count;
+    uint32_t max_count;
+} kronos_semaphore_t;
+
+typedef struct
+{
+    uint32_t task_id;
+    const char *task_name;
+} kronos_ingress_t;
+
+typedef struct
+{
+    uint32_t sequence;
+    uint32_t message_id;
+    uint32_t payload_size;
+    uint32_t sender_task_id;
+    uint32_t receiver_task_id;
+    const char *sender_task_name;
+    const char *receiver_task_name;
+    uint8_t payload[KRONOS_MESSAGE_MAX_PAYLOAD_BYTES];
+} kronos_mail_t;
+
 typedef struct
 {
     uint32_t *stack_top_ptr;
@@ -77,7 +143,6 @@ typedef struct
     task_state_e task_state;
     task_kind_e task_kind;
     uint32_t remaining_delay;
-    uint32_t last_delay_decr;
     void (*task_fn)(void);
     const char *task_name;
     uint32_t requested_stack_words;
@@ -95,14 +160,60 @@ extern TCB_t g_tasks[MAX_TASKS];
 extern uint32_t g_numTasks;
 extern uint32_t g_currentTask;
 
+/******************************************************************************
+* Declaration | Public Functions
+******************************************************************************/
+
 void RTOS_Init(void);
 int32_t RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName);
 int32_t RTOS_TaskPause(uint32_t taskId);
 int32_t RTOS_TaskResume(uint32_t taskId);
+int32_t RTOS_IngressResolve(kronos_ingress_t *ingress, const char *taskName);
+int32_t RTOS_EgressSend(const kronos_ingress_t *ingress, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
+int32_t RTOS_EgressSendByName(const char *taskName, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
+int32_t RTOS_EgressBroadcast(uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
+int32_t RTOS_IngressReceive(kronos_mail_t *message);
+int32_t RTOS_IngressWait(void);
+int32_t RTOS_IngressReceiveWait(kronos_mail_t *message);
+uint32_t RTOS_IngressPendingCount(void);
+int32_t RTOS_IngressPendingCountByName(const char *taskName, uint32_t *pendingCount);
+int32_t RTOS_MutexInit(kronos_mutex_t *mutex);
+int32_t RTOS_MutexLock(kronos_mutex_t *mutex);
+int32_t RTOS_MutexUnlock(kronos_mutex_t *mutex);
+int32_t RTOS_SemaphoreInit(kronos_semaphore_t *semaphore, uint32_t initialCount, uint32_t maxCount);
+int32_t RTOS_SemaphoreTake(kronos_semaphore_t *semaphore);
+int32_t RTOS_SemaphoreGive(kronos_semaphore_t *semaphore);
+void RTOS_SuspendScheduler(void);
+void RTOS_ResumeScheduler(void);
+void RTOS_ForceSwitch(void);
 void RTOS_Start(void);
 void RTOS_Delay(uint32_t ms);
 void Scheduler_RoundRobin(void);
 const TCB_t *RTOS_GetTaskTable(void);
 uint32_t RTOS_GetTaskCount(void);
 
+#define RTOS_EgressSendStruct(targetTaskName, messageId, objectPtr) \
+    RTOS_EgressSendByName((targetTaskName), (messageId), (objectPtr), (uint32_t)sizeof(*(objectPtr)))
+
+#define RTOS_EgressSendStructToIngress(ingressPtr, messageId, objectPtr) \
+    RTOS_EgressSend((ingressPtr), (messageId), (objectPtr), (uint32_t)sizeof(*(objectPtr)))
+
+static inline void SuspendScheduler(void)
+{
+    RTOS_SuspendScheduler();
+}
+
+static inline void ResumeScheduler(void)
+{
+    RTOS_ResumeScheduler();
+}
+
+static inline void ForceSwitch(void)
+{
+    RTOS_ForceSwitch();
+}
+
+/******************************************************************************
+* EOF - NO CODE AFTER THIS LINE
+******************************************************************************/
 #endif /* KRONOS_CORE_H */

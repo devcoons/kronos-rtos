@@ -1,7 +1,12 @@
 /*!
 @file   kronos_port_stm32l5.c
 @brief  KronOS STM32L5 port using the ARMv8-M MPU register model
+@t.odo  -
 */
+
+/******************************************************************************
+* Includes
+******************************************************************************/
 
 #include "kronos_port.h"
 
@@ -12,10 +17,18 @@
 
 #if KRONOS_PORT_STM32_FAMILY_L5
 
+/******************************************************************************
+* Declaration | Public Functions
+******************************************************************************/
+
 void SysTick_Handler(void);
 void PendSV_Handler(void);
 void SVC_Handler(void);
 void MemManage_Handler(void);
+
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
 
 #define REG32(address) (*(volatile uint32_t *)(address))
 
@@ -66,6 +79,10 @@ void MemManage_Handler(void);
 #define KRONOS_PORT_L5_AP_READ_WRITE     0U
 #define KRONOS_PORT_L5_AP_READ_ONLY      2U
 
+/******************************************************************************
+* Enumerations, Structures & Variables
+******************************************************************************/
+
 typedef struct
 {
     uint32_t base_address;
@@ -85,6 +102,20 @@ static const kronos_port_l5_region_t g_kronosPortStaticRegions[] = {
 extern uint32_t SystemCoreClock;
 
 static volatile uint32_t g_portSchedulerStarted = 0U;
+
+/******************************************************************************
+* Declaration | Static Functions
+******************************************************************************/
+
+static void kronos_port_enable_fpu_if_present(void);
+static void kronos_port_program_region(uint32_t regionNumber, uint32_t baseAddress, uint32_t sizeBytes, uint32_t apBits, uint32_t executeNever, uint32_t attrIndex);
+static void kronos_port_disable_region(uint32_t regionNumber);
+static void kronos_port_configure_static_regions(void);
+static __attribute__((used)) uint32_t *kronos_port_handle_memmanage(uint32_t *faultStackPtr);
+
+/******************************************************************************
+* Definition | Static Functions
+******************************************************************************/
 
 static void kronos_port_enable_fpu_if_present(void)
 {
@@ -158,6 +189,10 @@ static __attribute__((used)) uint32_t *kronos_port_handle_memmanage(uint32_t *fa
 
     return Kronos_CoreQuarantineCurrentTask(faultStackPtr, KRONOS_TASK_FAULT_MEMORY_ACCESS, faultAddress);
 }
+
+/******************************************************************************
+* Definition | Public Functions
+******************************************************************************/
 
 void Kronos_PortInitScheduler(uint32_t tickFrequencyHz)
 {
@@ -267,11 +302,6 @@ uint32_t Kronos_PortGetStackWarningMarginWords(void)
     return KRONOS_PORT_STACK_WARNING_MARGIN_WORDS;
 }
 
-uint32_t Kronos_PortGetStackRecoveryWords(void)
-{
-    return KRONOS_PORT_STACK_RECOVERY_WORDS;
-}
-
 void SysTick_Handler(void)
 {
     Kronos_CoreOnTick();
@@ -336,7 +366,7 @@ __attribute__((naked)) void SVC_Handler(void)
         "2:                                    \n"
         "mrs    r0, psp                        \n"
         "stmdb  r0!, {r4-r11}                  \n"
-        "bl     Kronos_CoreSwitchTask          \n"
+        "bl     Kronos_CoreHandleSupervisorCall \n"
         "3:                                    \n"
         "pop    {lr}                           \n"
         "ldmia  r0!, {r4-r11}                  \n"
@@ -366,4 +396,7 @@ __attribute__((naked)) void MemManage_Handler(void)
     );
 }
 
+/******************************************************************************
+* EOF - NO CODE AFTER THIS LINE
+******************************************************************************/
 #endif

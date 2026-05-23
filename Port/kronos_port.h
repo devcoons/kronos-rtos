@@ -1,6 +1,7 @@
 /*!
 @file   kronos_port.h
 @brief  Header file of KronOS (RTOS) Port functionalities
+@t.odo  -
 
 ---------------------------------------------------------------------------
 GNU Affero General Public License v3.0
@@ -26,10 +27,22 @@ a separate license is required. Contact:
 - Email: i_-_-_s@outlook.com
 */
 
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
+
 #ifndef KRONOS_PORT_H
 #define KRONOS_PORT_H
 
+/******************************************************************************
+* Includes
+******************************************************************************/
+
 #include <stdint.h>
+
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
 
 #define KRONOS_PORT_STACK_WARNING_MARGIN_WORDS 16U
 #define KRONOS_PORT_STACK_RECOVERY_WORDS       32U
@@ -37,6 +50,10 @@ a separate license is required. Contact:
 
 #define KRONOS_PORT_STACK_POOL_SECTION \
     __attribute__((section(".kronos_task_stacks"), aligned(KRONOS_PORT_STACK_POOL_ALIGNMENT_BYTES)))
+
+/******************************************************************************
+* Declaration | Public Functions
+******************************************************************************/
 
 void Kronos_PortInitScheduler(uint32_t tickFrequencyHz);
 void Kronos_PortStartScheduler(void);
@@ -47,6 +64,8 @@ uint32_t *Kronos_PortGetLiveProcessStackPointer(void);
 uint32_t Kronos_PortComputeTaskSlotWords(uint32_t requestedStackWords);
 uint32_t Kronos_PortGetDefaultClockHz(void);
 uint32_t Kronos_PortGetStackWarningMarginWords(void);
-uint32_t Kronos_PortGetStackRecoveryWords(void);
 
+/******************************************************************************
+* EOF - NO CODE AFTER THIS LINE
+******************************************************************************/
 #endif /* KRONOS_PORT_H */

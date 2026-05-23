@@ -1,25 +1,36 @@
 # KronOS RTOS
 
-KronOS is a small RTOS for STM32 microcontrollers, for these STM32 families:
+KronOS is a small RTOS for STM32 microcontrollers.
+
+Supported STM32 families:
 
 - STM32L4
 - STM32G4
 - STM32L5
 - STM32H7
 
-The goal is to keep it simple:
+The current sample project targets the NUCLEO-L476RG and blinks the onboard LED on GPIOA pin 5.
 
-- create tasks
-- give each task its own stack size
-- delay a task in milliseconds
-- start a round-robin scheduler
-- keep one internal idle task running when nothing else is ready
+## What KronOS provides today
 
-## What you can use today
+KronOS is intentionally small, but it already includes the main kernel services needed for simple embedded applications:
 
-The public API is in `kronos_core.h`.
+- fixed round-robin scheduling
+- one internal idle task
+- per-task stack sizing at task creation
+- delay in milliseconds
+- task pause and resume
+- mutexes
+- counting semaphores
+- scheduler suspend, resume, and forced context switch
+- mailbox-style task messaging with ingress and egress APIs
+- per-task stack tracking and fault quarantine support
 
-Main functions:
+The public API is in `Libs/KrRtos/kronos_core.h`.
+
+## Main API groups
+
+Task control:
 
 - `RTOS_Init()`
 - `RTOS_CreateTask()`
@@ -30,7 +41,39 @@ Main functions:
 - `RTOS_GetTaskTable()`
 - `RTOS_GetTaskCount()`
 
-## Very small example
+Synchronization:
+
+- `RTOS_MutexInit()`
+- `RTOS_MutexLock()`
+- `RTOS_MutexUnlock()`
+- `RTOS_SemaphoreInit()`
+- `RTOS_SemaphoreTake()`
+- `RTOS_SemaphoreGive()`
+- `RTOS_SuspendScheduler()`
+- `RTOS_ResumeScheduler()`
+- `RTOS_ForceSwitch()`
+
+Mailboxes:
+
+- `RTOS_IngressResolve()`
+- `RTOS_EgressSend()`
+- `RTOS_EgressSendByName()`
+- `RTOS_EgressBroadcast()`
+- `RTOS_IngressReceive()`
+- `RTOS_IngressWait()`
+- `RTOS_IngressReceiveWait()`
+- `RTOS_IngressPendingCount()`
+- `RTOS_IngressPendingCountByName()`
+
+Important mailbox notes:
+
+- Task names must be unique.
+- Task names are the normal mailbox identifiers.
+- Messages carry a message ID plus a byte payload.
+- `RTOS_IngressWait()` moves the current task into an internal waiting state until new mail arrives.
+- `RTOS_EgressBroadcast()` sends one copy to each ingress-capable task.
+
+## Very small task example
 
 ```c
 #include "kronos_core.h"
@@ -68,50 +111,99 @@ int main(void)
 Notes:
 
 - Task functions must be `void task(void)`.
-- A task should normally run in an infinite loop.
-- `RTOS_Start()` does not return.
-- The `stackWords` value is in 32-bit words, not bytes.
-- Example: `64U` means 64 words = 256 bytes requested by the task.
+- A task should normally run forever.
+- `RTOS_Start()` is not expected to return.
+- `stackWords` is in 32-bit words, not bytes.
+- `64U` means 64 words, which is 256 bytes.
+
+## Simple mailbox example
+
+```c
+#include "kronos_core.h"
+
+typedef struct
+{
+    uint32_t counter;
+} counter_mail_t;
+
+static void producer_task(void)
+{
+    counter_mail_t message;
+
+    message.counter = 0U;
+
+    for (;;)
+    {
+        message.counter++;
+        (void)RTOS_EgressSendStruct("consumer", 1U, &message);
+        RTOS_Delay(1000U);
+    }
+}
+
+static void consumer_task(void)
+{
+    kronos_mail_t mail;
+    const counter_mail_t *payload;
+
+    for (;;)
+    {
+        if (RTOS_IngressReceiveWait(&mail) == KRONOS_STATUS_OK)
+        {
+            payload = (const counter_mail_t *)mail.payload;
+            (void)payload;
+            /* Use payload->counter here. */
+        }
+    }
+}
+```
+
+## Build the sample project
+
+Use the configured CMake presets:
+
+```powershell
+cmake --preset Debug
+cmake --build --preset Debug
+```
+
+This sample is already configured for the STM32 GNU toolchain through the preset files.
 
 ## How to add KronOS to your own project
 
 ### 1. Copy the RTOS folder
 
-Copy the full source tree into your project under:
+Copy the full RTOS tree into your project:
 
 ```text
 Libs/KrRtos
 ```
 
-This is the easiest way, because it includes the public headers, internal headers, core sources, and STM32 port files.
-
 ### 2. Add the source files to your build
 
-At minimum, add these core files:
+Add these common RTOS sources:
 
 ```text
 Libs/KrRtos/kronos_core.c
 Libs/KrRtos/kronos_tasks.c
 Libs/KrRtos/kronos_scheduler.c
+Libs/KrRtos/kronos_sync.c
+Libs/KrRtos/kronos_channels.c
 ```
 
-For the port layer, the simple option is to add all files from:
+For the port layer:
 
-```text
-Libs/KrRtos/Port
-```
+- use `Libs/KrRtos/Port/kronos_port_stm32_armv7m.c` plus one family file for STM32L4, STM32G4, or STM32H7
+- use `Libs/KrRtos/Port/kronos_port_stm32l5.c` for STM32L5
 
-That works because the preprocessor selects the active STM32 family.
+Family configuration sources:
 
-If you prefer a smaller build, use:
-
-- `kronos_port_stm32_armv7m.c` plus one family file for STM32L4, STM32G4, or STM32H7
-or
-- `kronos_port_stm32l5.c` for STM32L5
+- `Libs/KrRtos/Port/kronos_port_stm32l4.c`
+- `Libs/KrRtos/Port/kronos_port_stm32g4.c`
+- `Libs/KrRtos/Port/kronos_port_stm32h7.c`
 
 ### 3. Add include paths
 
-Your project must include these folders:
+Your project must include:
 
 ```text
 Libs/KrRtos
@@ -124,24 +216,29 @@ Application code usually only needs:
 #include "kronos_core.h"
 ```
 
-### 4. Select the STM32 family
+### 4. Select one STM32 family
 
-The port looks for one STM32 family define.
+The port needs one active STM32 family define.
 
-For example:
+Examples:
 
 - `RTE_DEVICE_STARTUP_STM32L4XX`
 - `RTE_DEVICE_STARTUP_STM32G4XX`
 - `RTE_DEVICE_STARTUP_STM32L5XX`
 - `RTE_DEVICE_STARTUP_STM32H7XX`
 
-It also accepts the usual STM32 family macros like `STM32L4xx`, `STM32G4xx`, `STM32L5xx`, or `STM32H7xx`.
+The usual STM32 family macros also work:
 
-You only need one active family.
+- `STM32L4xx`
+- `STM32G4xx`
+- `STM32L5xx`
+- `STM32H7xx`
+
+Only one family should be active.
 
 ### 5. Make sure `SystemCoreClock` is valid
 
-KronOS uses `SystemCoreClock` to configure SysTick.
+KronOS uses `SystemCoreClock` when it configures SysTick.
 
 Your project must provide:
 
@@ -149,19 +246,17 @@ Your project must provide:
 uint32_t SystemCoreClock;
 ```
 
-In a normal STM32 project, this already exists in your system file.
-
 Important:
 
-- `SystemCoreClock` must match the real CPU clock before `RTOS_Start()` runs.
-- If you change the clock, update `SystemCoreClock` first.
+- `SystemCoreClock` must match the real CPU clock before `RTOS_Start()`.
+- If the clock changes, update `SystemCoreClock` first.
 - KronOS does not require your `system_xxx.c` file to include RTOS headers.
 
 ### 6. Add the task stack section to the linker script
 
-KronOS stores task stacks in a dedicated section called `.kronos_task_stacks`.
+KronOS stores task stacks in `.kronos_task_stacks`.
 
-Your linker script must contain a section like this:
+Your linker script needs a writable section such as:
 
 ```ld
 .kronos_task_stacks (NOLOAD) :
@@ -173,9 +268,9 @@ Your linker script must contain a section like this:
 } >RAM
 ```
 
-In this sample, the section is placed in `RAM` or `SRAM2`. The important part is that it is writable memory.
+In this sample, the section is placed in SRAM2.
 
-### 7. Make sure these exception handlers are not blocked by another file
+### 7. Make sure the RTOS handlers stay available
 
 The port provides these handlers:
 
@@ -184,20 +279,18 @@ The port provides these handlers:
 - `SVC_Handler`
 - `MemManage_Handler`
 
-Your startup file should keep these handlers weak, or at least not define strong versions somewhere else.
-
-If another file already owns these handlers, KronOS will not be able to run the scheduler correctly, so probably some integration will be required.
+Your startup code should leave these handlers weak, or at least not replace them by accident.
 
 ### 8. Create tasks before starting the scheduler
 
 Typical order:
 
-1. Initialize board and clock
-2. Call `RTOS_Init()`
-3. Create your application tasks
-4. Call `RTOS_Start()`
+1. Initialize board and clock.
+2. Call `RTOS_Init()`.
+3. Create application tasks.
+4. Call `RTOS_Start()`.
 
-Do not call `RTOS_CreateTask()` after the scheduler has started.
+Do not create tasks after the scheduler starts.
 
 ## Simple CMake example
 
@@ -206,11 +299,10 @@ target_sources(app PRIVATE
     Libs/KrRtos/kronos_core.c
     Libs/KrRtos/kronos_tasks.c
     Libs/KrRtos/kronos_scheduler.c
+    Libs/KrRtos/kronos_sync.c
+    Libs/KrRtos/kronos_channels.c
     Libs/KrRtos/Port/kronos_port_stm32_armv7m.c
     Libs/KrRtos/Port/kronos_port_stm32l4.c
-    Libs/KrRtos/Port/kronos_port_stm32g4.c
-    Libs/KrRtos/Port/kronos_port_stm32l5.c
-    Libs/KrRtos/Port/kronos_port_stm32h7.c
 )
 
 target_include_directories(app PRIVATE
@@ -226,7 +318,8 @@ Then add the correct STM32 family define for your target.
 - There is always one internal idle task.
 - Task stacks come from a fixed pool.
 - If task creation fails, `RTOS_CreateTask()` returns a negative value.
-- The default tick is `1000 Hz`, so `RTOS_Delay()` works in milliseconds in the current code.
-- Stack size and limits can be changed in `Libs/KrRtos/kronos_core.h`.
+- The default tick is `1000 Hz`, so `RTOS_Delay()` uses milliseconds in the current code.
+- Stack sizing and limits can be adjusted in `Libs/KrRtos/kronos_core.h`.
+- Mailboxes use a fixed global slot pool and a bounded payload size.
 
-If you want to add more kernel services later, this project is already split into core, task, scheduler, and port layers to make that easier.
+KronOS stays split into core, task, scheduler, synchronization, channel, and port layers so it is easier to maintain and port.

@@ -1,12 +1,25 @@
 /*!
 @file   kronos_port_stm32_family.h
 @brief  STM32 family selection helpers for the KronOS port layer
+@t.odo  -
 */
+
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
 
 #ifndef KRONOS_PORT_STM32_FAMILY_H
 #define KRONOS_PORT_STM32_FAMILY_H
 
+/******************************************************************************
+* Includes
+******************************************************************************/
+
 #include <stdint.h>
+
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
 
 #define KRONOS_PORT_MPU_REGION_COUNT        8U
 #define KRONOS_PORT_TASK_STACK_REGION_INDEX (KRONOS_PORT_MPU_REGION_COUNT - 1U)
@@ -48,4 +61,7 @@
 #define KRONOS_PORT_STM32_IS_ARMV7M \
     (KRONOS_PORT_STM32_FAMILY_L4 || KRONOS_PORT_STM32_FAMILY_G4 || KRONOS_PORT_STM32_FAMILY_H7)
 
+/******************************************************************************
+* EOF - NO CODE AFTER THIS LINE
+******************************************************************************/
 #endif /* KRONOS_PORT_STM32_FAMILY_H */

@@ -1,6 +1,7 @@
 /*!
 @file   kronos_kernel.h
 @brief  Header file of KronOS (RTOS) Kernel functionalities
+@t.odo  -
 
 ---------------------------------------------------------------------------
 GNU Affero General Public License v3.0
@@ -26,12 +27,24 @@ a separate license is required. Contact:
 - Email: i_-_-_s@outlook.com
 */
 
+/******************************************************************************
+* Preprocessor Definitions & Macros
+******************************************************************************/
+
 #ifndef KRONOS_KERNEL_H
 #define KRONOS_KERNEL_H
+
+/******************************************************************************
+* Includes
+******************************************************************************/
 
 #include <stdint.h>
 
 #include "kronos_core.h"
+
+/******************************************************************************
+* Enumerations, Structures & Variables
+******************************************************************************/
 
 typedef enum
 {
@@ -40,10 +53,18 @@ typedef enum
     KRONOS_STACK_CHECK_OVERFLOW = 2
 } kronos_stack_check_e;
 
+/******************************************************************************
+* Declaration | Internal Functions
+******************************************************************************/
+
 void Kronos_CoreOnTick(void);
 kronos_stack_check_e Kronos_CoreCheckCurrentTaskStack(uint32_t *exceptionStackPtr);
 uint32_t *Kronos_CorePrepareFirstTask(void);
+uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr);
 uint32_t *Kronos_CoreSwitchTask(uint32_t *savedStackPtr);
 uint32_t *Kronos_CoreQuarantineCurrentTask(uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress);
 
+/******************************************************************************
+* EOF - NO CODE AFTER THIS LINE
+******************************************************************************/
 #endif /* KRONOS_KERNEL_H */
