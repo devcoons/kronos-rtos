@@ -91,7 +91,7 @@ static void kronos_idle_task(void)
 
 static void kronos_task_exit(void)
 {
-    (void)RTOS_TaskDelete((kronos_task_id_t)g_currentTask);
+    (void)RTOS_TaskDelete(g_tasks[g_currentTask].task_name);
 
     for (;;)
     {
@@ -284,12 +284,10 @@ kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t s
     uint32_t reuseExistingStack;
     int32_t taskIndex;
 
-    if (taskId == NULL)
+    if (taskId != NULL)
     {
-        return KRONOS_STATUS_INVALID_ARGUMENT;
+        *taskId = KRONOS_INVALID_TASK_ID;
     }
-
-    *taskId = KRONOS_INVALID_TASK_ID;
 
     if ((taskFunction == NULL) || (taskName == NULL) || (taskName[0] == '\0'))
     {
@@ -378,40 +376,82 @@ kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t s
         g_numTasks++;
     }
 
-    *taskId = (kronos_task_id_t)taskIndex;
+    if (taskId != NULL)
+    {
+        *taskId = (kronos_task_id_t)taskIndex;
+    }
     return KRONOS_STATUS_OK;
 }
 
-kronos_status_e RTOS_TaskDelete(kronos_task_id_t taskId)
+kronos_status_e RTOS_TaskDelete(const char *taskName)
 {
+    kronos_task_id_t taskId;
+
+    if ((taskName == NULL) || (taskName[0] == '\0'))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    taskId = (kronos_task_id_t)Kronos_TaskFindByName(taskName);
+    if (taskId == KRONOS_INVALID_TASK_ID)
+    {
+        return KRONOS_STATUS_NOT_FOUND;
+    }
+
     if (g_schedulerStarted == 0U)
     {
         return Kronos_TaskDeleteInternal(taskId);
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_DELETE, NULL, taskId);
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_DELETE, (void *)taskName, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_TaskPause(kronos_task_id_t taskId)
+kronos_status_e RTOS_TaskPause(const char *taskName)
 {
+    kronos_task_id_t taskId;
+
+    if ((taskName == NULL) || (taskName[0] == '\0'))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    taskId = (kronos_task_id_t)Kronos_TaskFindByName(taskName);
+    if (taskId == KRONOS_INVALID_TASK_ID)
+    {
+        return KRONOS_STATUS_NOT_FOUND;
+    }
+
     if (g_schedulerStarted == 0U)
     {
         return Kronos_TaskPauseInternal(taskId);
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_PAUSE, NULL, taskId);
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_PAUSE, (void *)taskName, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_TaskResume(kronos_task_id_t taskId)
+kronos_status_e RTOS_TaskResume(const char *taskName)
 {
+    kronos_task_id_t taskId;
+
+    if ((taskName == NULL) || (taskName[0] == '\0'))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    taskId = (kronos_task_id_t)Kronos_TaskFindByName(taskName);
+    if (taskId == KRONOS_INVALID_TASK_ID)
+    {
+        return KRONOS_STATUS_NOT_FOUND;
+    }
+
     if (g_schedulerStarted == 0U)
     {
         return Kronos_TaskResumeInternal(taskId);
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_RESUME, NULL, taskId);
+    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_RESUME, (void *)taskName, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 

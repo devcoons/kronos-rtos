@@ -2,7 +2,7 @@
 
 This document describes the exposed KronOS RTOS API and the internal kernel and port interfaces.
 
-The documentation is engineering oriented and uses plain English. Public APIs are intended for application code. Internal APIs are intended for the kernel and port layer. Do not call internal APIs from application tasks unless you are modifying KronOS itself.
+Public APIs are intended for application code. Internal APIs are intended for the kernel and port layer. Do not call internal APIs from application tasks unless you are modifying KronOS itself.
 
 ## Table of Contents
 
@@ -53,11 +53,8 @@ Normal application order:
 ```c
 RTOS_Init();
 {
-    kronos_task_id_t task_a_id;
-    kronos_task_id_t task_b_id;
-
-    (void)RTOS_CreateTask(task_a, 64U, "task_a", &task_a_id);
-    (void)RTOS_CreateTask(task_b, 64U, "task_b", &task_b_id);
+    (void)RTOS_CreateTask(task_a, 64U, "task_a");
+    (void)RTOS_CreateTask(task_b, 64U, "task_b");
 }
 RTOS_Start();
 ```
@@ -125,11 +122,7 @@ int main(void)
 {
     board_init();
     RTOS_Init();
-    {
-        kronos_task_id_t app_task_id;
-
-        (void)RTOS_CreateTask(app_task, 64U, "app", &app_task_id);
-    }
+    (void)RTOS_CreateTask(app_task, 64U, "app");
     RTOS_Start();
 }
 ```
@@ -139,8 +132,7 @@ int main(void)
 ```c
 kronos_status_e RTOS_CreateTask(void (*taskFunction)(void),
                                 uint32_t stackWords,
-                                const char *taskName,
-                                kronos_task_id_t *taskId);
+                                const char *taskName);
 ```
 
 Visibility: Public application API.
@@ -152,9 +144,8 @@ Inputs:
 | `taskFunction` | Task entry function. It must match `void task(void)`. |
 | `stackWords` | Requested task stack size in 32-bit words. `0` uses `DEFAULT_STACK_SIZE_WORDS`. |
 | `taskName` | Unique non-empty task name string. |
-| `taskId` | Output pointer for the created task ID. |
 
-Outputs: Creates one task control block and one stack slot, and writes the task ID to `*taskId`.
+Outputs: Creates one task control block and one stack slot.
 
 What it does: Creates an application task in the ready state.
 
@@ -164,8 +155,8 @@ Return values:
 
 | Return | Meaning |
 | --- | --- |
-| `KRONOS_STATUS_OK` | Task created and `*taskId` written. |
-| `KRONOS_STATUS_INVALID_ARGUMENT` | Null task function, null/empty name, null `taskId`, or too-small stack. |
+| `KRONOS_STATUS_OK` | Task created successfully. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Null task function, null/empty name, or too-small stack. |
 | `KRONOS_STATUS_IN_USE` | Another active task already uses the same name. |
 | `KRONOS_STATUS_NO_MEMORY` | No task slot or stack pool space is available. |
 
@@ -189,9 +180,7 @@ static void sensor_task(void)
     }
 }
 
-kronos_task_id_t sensor_id;
-
-if (RTOS_CreateTask(sensor_task, 96U, "sensor", &sensor_id) != KRONOS_STATUS_OK)
+if (RTOS_CreateTask(sensor_task, 96U, "sensor") != KRONOS_STATUS_OK)
 {
     error_handler();
 }
@@ -200,7 +189,7 @@ if (RTOS_CreateTask(sensor_task, 96U, "sensor", &sensor_id) != KRONOS_STATUS_OK)
 #### `RTOS_TaskDelete`
 
 ```c
-kronos_status_e RTOS_TaskDelete(kronos_task_id_t taskId);
+kronos_status_e RTOS_TaskDelete(const char *taskName);
 ```
 
 Visibility: Public application API.
@@ -209,32 +198,32 @@ Inputs:
 
 | Input | Description |
 | --- | --- |
-| `taskId` | Task ID to delete. |
+| `taskName` | Unique task name to delete. |
 
-Outputs: Marks the task stopped and cleans task-owned runtime resources.
+Outputs: Marks the named task stopped and cleans task-owned runtime resources.
 
 What it does: Deletes an application task before or after the scheduler starts.
 
-How it works: Before the scheduler starts, deletion runs directly. After the scheduler starts, the request is handled through SVC in kernel context. KronOS rejects the idle task, removes pending mailbox messages where the task is sender or receiver, releases any registered mutex owned by the task, clears wait/service state, and marks the task slot stopped for later reuse.
+How it works: Before the scheduler starts, deletion runs directly. After the scheduler starts, the request is handled through SVC in kernel context. KronOS resolves the task name to the internal task slot, rejects the idle task, removes pending mailbox messages where the task is sender or receiver, releases any registered mutex owned by the task, clears wait/service state, and marks the task slot stopped for later reuse.
 
 Return values:
 
 | Return | Meaning |
 | --- | --- |
 | `KRONOS_STATUS_OK` | Task deleted. |
-| `KRONOS_STATUS_NOT_FOUND` | Task ID is invalid or the task is already stopped. |
+| `KRONOS_STATUS_NOT_FOUND` | Task name is invalid or the task is already stopped. |
 | `KRONOS_STATUS_INVALID_ARGUMENT` | The task is the internal idle task. |
 
 Notes:
 
 - A task may delete itself. On successful self-delete, the call does not return to that task.
-- Deleting a task does not compact the task table. This keeps existing task IDs stable.
+- Deleting a task does not compact the task table. The slot can later be reused.
 - Mutex cleanup only applies to mutexes initialized with `RTOS_MutexInit()`.
 
 Example:
 
 ```c
-if (RTOS_TaskDelete(sensor_id) != KRONOS_STATUS_OK)
+if (RTOS_TaskDelete("sensor") != KRONOS_STATUS_OK)
 {
     error_handler();
 }
@@ -269,9 +258,7 @@ Example:
 ```c
 RTOS_Init();
 {
-    kronos_task_id_t control_task_id;
-
-    (void)RTOS_CreateTask(control_task, 128U, "control", &control_task_id);
+    (void)RTOS_CreateTask(control_task, 128U, "control");
 }
 RTOS_Start();
 ```
@@ -317,7 +304,7 @@ for (;;)
 #### `RTOS_TaskPause`
 
 ```c
-kronos_status_e RTOS_TaskPause(kronos_task_id_t taskId);
+kronos_status_e RTOS_TaskPause(const char *taskName);
 ```
 
 Visibility: Public application API.
@@ -326,13 +313,13 @@ Inputs:
 
 | Input | Description |
 | --- | --- |
-| `taskId` | Task ID returned by `RTOS_CreateTask()`. |
+| `taskName` | Unique task name to pause. |
 
-Outputs: Changes the target task state to `TASK_STATE_PAUSED`.
+Outputs: Changes the named task state to `TASK_STATE_PAUSED`.
 
 What it does: Pauses another task.
 
-How it works: Before the scheduler starts, the task is paused directly. After the scheduler starts, the request is handled through SVC. KronOS validates the task ID, rejects the current task and idle task, then changes a ready or delayed task to paused.
+How it works: Before the scheduler starts, the task is paused directly. After the scheduler starts, the request is handled through SVC. KronOS resolves the task name, rejects the current task and idle task, then changes a ready or delayed task to paused.
 
 Return values:
 
@@ -350,21 +337,16 @@ Notes:
 Example:
 
 ```c
-static kronos_task_id_t worker_id = KRONOS_INVALID_TASK_ID;
-
 void stop_worker_temporarily(void)
 {
-    if (worker_id != KRONOS_INVALID_TASK_ID)
-    {
-        (void)RTOS_TaskPause(worker_id);
-    }
+    (void)RTOS_TaskPause("worker");
 }
 ```
 
 #### `RTOS_TaskResume`
 
 ```c
-kronos_status_e RTOS_TaskResume(kronos_task_id_t taskId);
+kronos_status_e RTOS_TaskResume(const char *taskName);
 ```
 
 Visibility: Public application API.
@@ -373,26 +355,26 @@ Inputs:
 
 | Input | Description |
 | --- | --- |
-| `taskId` | Task ID returned by `RTOS_CreateTask()`. |
+| `taskName` | Unique task name returned by the application-level naming convention. |
 
 Outputs: Moves a paused task back to ready or delayed state.
 
 What it does: Resumes a paused task.
 
-How it works: Before the scheduler starts, the task is resumed directly. After the scheduler starts, the request is handled through SVC. If the paused task still has `remaining_delay > 0`, it returns to `TASK_STATE_TIME_DELAY`. Otherwise it becomes ready. If the scheduler is suspended, a pending switch is recorded.
+How it works: Before the scheduler starts, the task is resumed directly. After the scheduler starts, the request is handled through SVC. KronOS resolves the task name and, if the paused task still has `remaining_delay > 0`, it returns to `TASK_STATE_TIME_DELAY`. Otherwise it becomes ready. If the scheduler is suspended, a pending switch is recorded.
 
 Return values:
 
 | Return | Meaning |
 | --- | --- |
 | `KRONOS_STATUS_OK` | Task resumed. |
-| `KRONOS_STATUS_NOT_FOUND` | Task ID is invalid. |
+| `KRONOS_STATUS_NOT_FOUND` | Task name is invalid or the task is stopped. |
 | `KRONOS_STATUS_INVALID_STATE` | Task is not paused. |
 
 Example:
 
 ```c
-(void)RTOS_TaskResume(worker_id);
+(void)RTOS_TaskResume("worker");
 ```
 
 ### Scheduler Control
@@ -2968,12 +2950,10 @@ static void blink_task(void)
 
 int main(void)
 {
-    kronos_task_id_t blink_task_id;
-
     board_init();
 
     RTOS_Init();
-    if (RTOS_CreateTask(blink_task, 64U, "blink", &blink_task_id) != KRONOS_STATUS_OK)
+    if (RTOS_CreateTask(blink_task, 64U, "blink") != KRONOS_STATUS_OK)
     {
         for (;;)
         {
@@ -3093,7 +3073,7 @@ void app_init(void)
 ```c
 #include "kronos_core.h"
 
-static kronos_task_id_t worker_id = KRONOS_INVALID_TASK_ID;
+static uint8_t worker_running = 0U;
 
 static void worker_task(void)
 {
@@ -3108,20 +3088,22 @@ static void manager_task(void)
 {
     for (;;)
     {
-        if (should_start_worker() && (worker_id == KRONOS_INVALID_TASK_ID))
+        if (should_start_worker() && (worker_running == 0U))
         {
-            if (RTOS_CreateTask(worker_task, 96U, "worker", &worker_id) != KRONOS_STATUS_OK)
+            if (RTOS_CreateTask(worker_task, 96U, "worker") != KRONOS_STATUS_OK)
             {
-                worker_id = KRONOS_INVALID_TASK_ID;
+                worker_running = 0U;
+            }
+            else
+            {
+                worker_running = 1U;
             }
         }
 
-        if (should_stop_worker() && (worker_id != KRONOS_INVALID_TASK_ID))
+        if (should_stop_worker() && (worker_running != 0U))
         {
-            if (RTOS_TaskDelete(worker_id) == KRONOS_STATUS_OK)
-            {
-                worker_id = KRONOS_INVALID_TASK_ID;
-            }
+            (void)RTOS_TaskDelete("worker");
+            worker_running = 0U;
         }
 
         RTOS_Delay(100U);

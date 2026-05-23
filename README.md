@@ -38,10 +38,13 @@ Task control:
 - `RTOS_Init()`
 - `RTOS_CreateTask()`
 - `RTOS_TaskDelete()`
+- `RTOS_TaskDelete(taskName)`
 - `RTOS_Start()`
 - `RTOS_Delay()`
 - `RTOS_TaskPause()`
+- `RTOS_TaskPause(taskName)`
 - `RTOS_TaskResume()`
+- `RTOS_TaskResume(taskName)`
 - `RTOS_DriverInit()`
 - `RTOS_GetTaskTable()`
 - `RTOS_GetTaskCount()`
@@ -98,9 +101,7 @@ int main(void)
 
     RTOS_Init();
 
-    kronos_task_id_t blink_task_id;
-
-    if (RTOS_CreateTask(blink_task, 64U, "blink", &blink_task_id) != KRONOS_STATUS_OK)
+    if (RTOS_CreateTask(blink_task, 64U, "blink") != KRONOS_STATUS_OK)
     {
         for (;;)
         {
@@ -122,7 +123,8 @@ Notes:
 - `RTOS_Start()` is not expected to return.
 - `stackWords` is in 32-bit words, not bytes.
 - `64U` means 64 words, which is 256 bytes.
-- `RTOS_CreateTask()` returns a status code and writes the task ID through the output pointer.
+- `RTOS_CreateTask()` returns a status code only.
+- Task control APIs use task names, not task IDs.
 
 ## Simple mailbox example
 
@@ -326,6 +328,7 @@ Then add the correct STM32 family define for your target.
 - There is always one internal idle task.
 - Task stacks come from a fixed pool.
 - If task creation fails, `RTOS_CreateTask()` returns a `kronos_status_e` error code.
+- Task operations such as delete, pause, and resume are name-based.
 - Deleted tasks release pending mailbox messages. If a deleted task owns a registered mutex, KronOS releases it and wakes one waiter.
 - Mutexes and semaphores must be initialized before use. KronOS rejects uninitialized sync objects.
 - The default tick is `1000 Hz`, so `RTOS_Delay()` uses milliseconds in the current code.

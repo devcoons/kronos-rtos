@@ -120,7 +120,7 @@ static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr)
 
 static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_request_t *request)
 {
-    if ((request == NULL) || (request->task_id_ptr == NULL))
+    if (request == NULL)
     {
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
@@ -129,7 +129,7 @@ static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_req
                                      request->stack_words,
                                      request->task_name,
                                      TASK_KIND_APPLICATION,
-                                     request->task_id_ptr);
+                                     NULL);
 }
 
 static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init_request_t *request)
@@ -423,18 +423,22 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
             break;
 
         case KRONOS_SERVICE_TASK_DELETE:
-            outcome.status = Kronos_TaskDeleteInternal((kronos_task_id_t)serviceParameter);
-            outcome.switch_required = ((outcome.status == KRONOS_STATUS_OK) &&
-                                       (serviceParameter == g_currentTask)) ? 1U : 0U;
+        {
+            int32_t taskIndex;
+
+            taskIndex = Kronos_TaskFindByName((const char *)runtimeState->service_object_ptr);
+            outcome.status = Kronos_TaskDeleteInternal((kronos_task_id_t)taskIndex);
+            outcome.switch_required = ((outcome.status == KRONOS_STATUS_OK) && ((uint32_t)taskIndex == g_currentTask)) ? 1U : 0U;
             break;
+        }
 
         case KRONOS_SERVICE_TASK_PAUSE:
-            outcome.status = Kronos_TaskPauseInternal((kronos_task_id_t)serviceParameter);
+            outcome.status = Kronos_TaskPauseInternal((kronos_task_id_t)Kronos_TaskFindByName((const char *)runtimeState->service_object_ptr));
             outcome.switch_required = 0U;
             break;
 
         case KRONOS_SERVICE_TASK_RESUME:
-            outcome.status = Kronos_TaskResumeInternal((kronos_task_id_t)serviceParameter);
+            outcome.status = Kronos_TaskResumeInternal((kronos_task_id_t)Kronos_TaskFindByName((const char *)runtimeState->service_object_ptr));
             outcome.switch_required = (outcome.status == KRONOS_STATUS_OK) ? 1U : 0U;
             break;
 

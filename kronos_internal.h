@@ -88,7 +88,6 @@ typedef struct
 {
 	void (*task_function)(void);
 	const char *task_name;
-	kronos_task_id_t *task_id_ptr;
 	uint32_t stack_words;
 } kronos_task_create_request_t;
 

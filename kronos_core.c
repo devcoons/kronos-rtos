@@ -48,25 +48,17 @@ void RTOS_Init(void)
     Kronos_TaskUpdateAllStats();
 }
 
-kronos_status_e RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, kronos_task_id_t *taskId)
+kronos_status_e RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName)
 {
     kronos_task_create_request_t request;
 
-    if (taskId == NULL)
-    {
-        return KRONOS_STATUS_INVALID_ARGUMENT;
-    }
-
-    *taskId = KRONOS_INVALID_TASK_ID;
-
     if (g_schedulerStarted == 0U)
     {
-        return Kronos_TaskCreateInternal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, taskId);
+        return Kronos_TaskCreateInternal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, NULL);
     }
 
     request.task_function = taskFunction;
     request.task_name = taskName;
-    request.task_id_ptr = taskId;
     request.stack_words = stackWords;
 
     Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_CREATE, &request, 0U);
