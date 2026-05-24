@@ -187,14 +187,14 @@ static __attribute__((used)) uint32_t *kronos_port_handle_memmanage(uint32_t *fa
 
     SCB_CFSR = faultStatus;
 
-    return Kronos_CoreQuarantineCurrentTask(faultStackPtr, KRONOS_TASK_FAULT_MEMORY_ACCESS, faultAddress);
+    return kronos_core_quarantine_current_task(faultStackPtr, KRONOS_TASK_FAULT_MEMORY_ACCESS, faultAddress);
 }
 
 /******************************************************************************
 * Definition | Public Functions
 ******************************************************************************/
 
-void Kronos_PortInitScheduler(uint32_t tickFrequencyHz)
+void kronos_port_init_scheduler(uint32_t tickFrequencyHz)
 {
     uint32_t shpr1;
     uint32_t shpr3;
@@ -206,7 +206,7 @@ void Kronos_PortInitScheduler(uint32_t tickFrequencyHz)
 
     if (SystemCoreClock == 0U)
     {
-        SystemCoreClock = Kronos_PortGetDefaultClockHz();
+        SystemCoreClock = kronos_port_get_default_clock_hz();
     }
 
     systickReload = (SystemCoreClock / tickFrequencyHz) - 1U;
@@ -235,22 +235,22 @@ void Kronos_PortInitScheduler(uint32_t tickFrequencyHz)
                    SYSTICK_CTRL_ENABLE_Msk;
 }
 
-void Kronos_PortStartScheduler(void)
+void kronos_port_start_scheduler(void)
 {
     __asm volatile ("svc #0");
 }
 
-void Kronos_PortRequestYield(void)
+void kronos_port_request_yield(void)
 {
     __asm volatile ("svc #0");
 }
 
-void Kronos_PortPendContextSwitch(void)
+void kronos_port_pend_context_switch(void)
 {
     SCB_ICSR = SCB_ICSR_PENDSVSET_Msk;
 }
 
-void Kronos_PortConfigureTaskStackRegion(const uint32_t *stackBase, uint32_t stackWords)
+void kronos_port_configure_task_stack_region(const uint32_t *stackBase, uint32_t stackWords)
 {
     if ((stackBase == NULL) || (stackWords == 0U))
     {
@@ -267,7 +267,7 @@ void Kronos_PortConfigureTaskStackRegion(const uint32_t *stackBase, uint32_t sta
         KRONOS_PORT_L5_ATTR_INDEX_NORMAL);
 }
 
-uint32_t *Kronos_PortGetLiveProcessStackPointer(void)
+uint32_t *kronos_port_get_live_process_stack_pointer(void)
 {
     uint32_t *stackPtr;
 
@@ -276,7 +276,7 @@ uint32_t *Kronos_PortGetLiveProcessStackPointer(void)
     return stackPtr;
 }
 
-uint32_t Kronos_PortComputeTaskSlotWords(uint32_t requestedStackWords)
+uint32_t kronos_port_compute_task_slot_words(uint32_t requestedStackWords)
 {
     uint32_t minimumWords;
     uint32_t slotWords;
@@ -292,19 +292,19 @@ uint32_t Kronos_PortComputeTaskSlotWords(uint32_t requestedStackWords)
     return slotWords;
 }
 
-uint32_t Kronos_PortGetDefaultClockHz(void)
+uint32_t kronos_port_get_default_clock_hz(void)
 {
     return 4000000UL;
 }
 
-uint32_t Kronos_PortGetStackWarningMarginWords(void)
+uint32_t kronos_port_get_stack_warning_margin_words(void)
 {
     return KRONOS_PORT_STACK_WARNING_MARGIN_WORDS;
 }
 
 void SysTick_Handler(void)
 {
-    Kronos_CoreOnTick();
+    kronos_core_on_tick();
 }
 
 __attribute__((naked)) void PendSV_Handler(void)
@@ -313,18 +313,18 @@ __attribute__((naked)) void PendSV_Handler(void)
         "cpsid  i                              \n"
         "mrs    r0, psp                        \n"
         "push   {lr}                           \n"
-        "bl     Kronos_CoreCheckCurrentTaskStack \n"
+        "bl     kronos_core_check_current_task_stack \n"
         "cmp    r0, #2                         \n"
         "bne    1f                             \n"
         "mrs    r0, psp                        \n"
         "movs   r1, #2                         \n"
         "movs   r2, #0                         \n"
-        "bl     Kronos_CoreQuarantineCurrentTask \n"
+        "bl     kronos_core_quarantine_current_task \n"
         "b      2f                             \n"
         "1:                                    \n"
         "mrs    r0, psp                        \n"
         "stmdb  r0!, {r4-r11}                  \n"
-        "bl     Kronos_CoreSwitchTask          \n"
+        "bl     kronos_core_switch_task          \n"
         "2:                                    \n"
         "pop    {lr}                           \n"
         "ldmia  r0!, {r4-r11}                  \n"
@@ -342,7 +342,7 @@ __attribute__((naked)) void SVC_Handler(void)
         "cbnz   r2, 1f                         \n"
         "movs   r2, #1                         \n"
         "str    r2, [r3]                       \n"
-        "bl     Kronos_CorePrepareFirstTask    \n"
+        "bl     kronos_core_prepare_first_task    \n"
         "ldmia  r0!, {r4-r11}                  \n"
         "msr    psp, r0                        \n"
         "movs   r0, #3                         \n"
@@ -355,18 +355,18 @@ __attribute__((naked)) void SVC_Handler(void)
         "cpsid  i                              \n"
         "mrs    r0, psp                        \n"
         "push   {lr}                           \n"
-        "bl     Kronos_CoreCheckCurrentTaskStack \n"
+        "bl     kronos_core_check_current_task_stack \n"
         "cmp    r0, #2                         \n"
         "bne    2f                             \n"
         "mrs    r0, psp                        \n"
         "movs   r1, #2                         \n"
         "movs   r2, #0                         \n"
-        "bl     Kronos_CoreQuarantineCurrentTask \n"
+        "bl     kronos_core_quarantine_current_task \n"
         "b      3f                             \n"
         "2:                                    \n"
         "mrs    r0, psp                        \n"
         "stmdb  r0!, {r4-r11}                  \n"
-        "bl     Kronos_CoreHandleSupervisorCall \n"
+        "bl     kronos_core_handle_supervisor_call \n"
         "3:                                    \n"
         "pop    {lr}                           \n"
         "ldmia  r0!, {r4-r11}                  \n"

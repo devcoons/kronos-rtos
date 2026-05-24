@@ -128,39 +128,39 @@ extern kronos_task_runtime_t g_taskRuntime[MAX_TASKS];
 * Declaration | Internal Functions
 ******************************************************************************/
 
-void Kronos_TasksResetState(void);
-kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind, kronos_task_id_t *taskId);
-kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId);
-kronos_status_e Kronos_TaskPauseInternal(kronos_task_id_t taskId);
-kronos_status_e Kronos_TaskResumeInternal(kronos_task_id_t taskId);
-void Kronos_TaskUpdateAllStats(void);
-void Kronos_TaskUpdateStackMetrics(TCB_t *tcb, const uint32_t *stackPtr);
-kronos_stack_check_e Kronos_TaskCheckStack(TCB_t *tcb, const uint32_t *stackPtr);
-void Kronos_TaskQuarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress);
-int32_t Kronos_TaskFindByName(const char *taskName);
-int32_t Kronos_TaskFindNextReady(task_kind_e taskKind, uint32_t startTask);
-int32_t Kronos_TaskFindWaiting(kronos_wait_reason_e waitReason, const void *waitObject, uint32_t startTask);
-void Kronos_TaskBlock(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObject);
-void Kronos_TaskUnblock(TCB_t *tcb);
-uint32_t Kronos_TaskSelectStartTask(void);
-void Kronos_TaskActivate(uint32_t taskIndex);
+void kronos_tasks_reset_state(void);
+kronos_status_e kronos_task_create_internal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind, kronos_task_id_t *taskId);
+kronos_status_e kronos_task_delete_internal(kronos_task_id_t taskId);
+kronos_status_e kronos_task_pause_internal(kronos_task_id_t taskId);
+kronos_status_e kronos_task_resume_internal(kronos_task_id_t taskId);
+void kronos_task_update_all_stats(void);
+void kronos_task_update_stack_metrics(TCB_t *tcb, const uint32_t *stackPtr);
+kronos_stack_check_e kronos_task_check_stack(TCB_t *tcb, const uint32_t *stackPtr);
+void kronos_task_quarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress);
+int32_t kronos_task_find_by_name(const char *taskName);
+int32_t kronos_task_find_next_ready(task_kind_e taskKind, uint32_t startTask);
+int32_t kronos_task_find_waiting(kronos_wait_reason_e waitReason, const void *waitObject, uint32_t startTask);
+void kronos_task_block(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObject);
+void kronos_task_unblock(TCB_t *tcb);
+uint32_t kronos_task_select_start_task(void);
+void kronos_task_activate(uint32_t taskIndex);
 
-void Kronos_ChannelsResetState(void);
-void Kronos_ChannelsCleanupTask(kronos_task_id_t taskId);
+void kronos_channels_reset_state(void);
+void kronos_channels_cleanup_task(kronos_task_id_t taskId);
 
-void Kronos_SchedulerResetState(void);
-void Kronos_SchedulerRequestService(kronos_service_e serviceRequest, void *serviceObject, uint32_t serviceParameter);
+void kronos_scheduler_reset_state(void);
+void kronos_scheduler_request_service(kronos_service_e serviceRequest, void *serviceObject, uint32_t serviceParameter);
 
-void Kronos_SyncResetState(void);
-void Kronos_SyncCleanupTask(kronos_task_id_t taskId);
-void Kronos_SyncMutexLock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome);
-void Kronos_SyncMutexUnlock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome);
-void Kronos_SyncSemaphoreTake(TCB_t *currentTcb, kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome);
-void Kronos_SyncSemaphoreGive(kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome);
-void Kronos_ChannelsIngressReceive(kronos_mail_t *message, kronos_service_outcome_t *outcome);
-void Kronos_ChannelsIngressWait(kronos_service_outcome_t *outcome);
-void Kronos_ChannelsEgressSend(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome);
-void Kronos_ChannelsEgressBroadcast(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome);
+void kronos_sync_reset_state(void);
+void kronos_sync_cleanup_task(kronos_task_id_t taskId);
+void kronos_sync_mutex_lock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome);
+void kronos_sync_mutex_unlock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome);
+void kronos_sync_semaphore_take(TCB_t *currentTcb, kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome);
+void kronos_sync_semaphore_give(kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome);
+void kronos_channels_ingress_receive(kronos_mail_t *message, kronos_service_outcome_t *outcome);
+void kronos_channels_ingress_wait(kronos_service_outcome_t *outcome);
+void kronos_channels_egress_send(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome);
+void kronos_channels_egress_broadcast(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome);
 
 /******************************************************************************
 * EOF - NO CODE AFTER THIS LINE

@@ -236,7 +236,7 @@ static void kronos_channels_queue_slot(uint32_t taskIndex, uint32_t slotIndex)
 
     if (kronos_channels_task_waits_for_ingress(taskIndex) != 0U)
     {
-        Kronos_TaskUnblock(&g_tasks[taskIndex]);
+        kronos_task_unblock(&g_tasks[taskIndex]);
     }
 }
 
@@ -313,7 +313,7 @@ static int32_t kronos_channels_resolve_target_task(const kronos_channel_request_
         return -1;
     }
 
-    return Kronos_TaskFindByName(request->task_name);
+    return kronos_task_find_by_name(request->task_name);
 }
 
 static kronos_status_e kronos_channels_deliver(uint32_t taskIndex, const void *payloadPtr, uint32_t payloadSize, uint32_t messageId, kronos_service_outcome_t *outcome)
@@ -462,7 +462,7 @@ static void kronos_channels_cleanup_queue(uint32_t queueTaskIndex, kronos_task_i
 * Definition | Public Functions
 ******************************************************************************/
 
-kronos_status_e RTOS_IngressResolve(kronos_ingress_t *ingress, const char *taskName)
+kronos_status_e Kronos_IngressResolve(kronos_ingress_t *ingress, const char *taskName)
 {
     int32_t taskIndex;
 
@@ -471,7 +471,7 @@ kronos_status_e RTOS_IngressResolve(kronos_ingress_t *ingress, const char *taskN
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    taskIndex = Kronos_TaskFindByName(taskName);
+    taskIndex = kronos_task_find_by_name(taskName);
     if (taskIndex < 0)
     {
         return KRONOS_STATUS_NOT_FOUND;
@@ -487,7 +487,7 @@ kronos_status_e RTOS_IngressResolve(kronos_ingress_t *ingress, const char *taskN
     return KRONOS_STATUS_OK;
 }
 
-kronos_status_e RTOS_EgressSend(const kronos_ingress_t *ingress, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize)
+kronos_status_e Kronos_EgressSend(const kronos_ingress_t *ingress, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize)
 {
     kronos_channel_request_t request;
 
@@ -508,11 +508,11 @@ kronos_status_e RTOS_EgressSend(const kronos_ingress_t *ingress, uint32_t messag
     request.message_id = messageId;
     request.payload_size = payloadSize;
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_EGRESS_SEND, &request, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_EGRESS_SEND, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_EgressSendByName(const char *taskName, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize)
+kronos_status_e Kronos_EgressSendByName(const char *taskName, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize)
 {
     kronos_channel_request_t request;
 
@@ -533,11 +533,11 @@ kronos_status_e RTOS_EgressSendByName(const char *taskName, uint32_t messageId, 
     request.message_id = messageId;
     request.payload_size = payloadSize;
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_EGRESS_SEND, &request, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_EGRESS_SEND, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_EgressBroadcast(uint32_t messageId, const void *payloadPtr, uint32_t payloadSize)
+kronos_status_e Kronos_EgressBroadcast(uint32_t messageId, const void *payloadPtr, uint32_t payloadSize)
 {
     kronos_channel_request_t request;
 
@@ -553,11 +553,11 @@ kronos_status_e RTOS_EgressBroadcast(uint32_t messageId, const void *payloadPtr,
     request.message_id = messageId;
     request.payload_size = payloadSize;
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_EGRESS_BROADCAST, &request, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_EGRESS_BROADCAST, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_IngressReceive(kronos_mail_t *message)
+kronos_status_e Kronos_IngressReceive(kronos_mail_t *message)
 {
     kronos_channel_request_t request;
 
@@ -578,22 +578,22 @@ kronos_status_e RTOS_IngressReceive(kronos_mail_t *message)
     request.message_id = 0U;
     request.payload_size = 0U;
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_INGRESS_RECEIVE, &request, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_INGRESS_RECEIVE, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_IngressWait(void)
+kronos_status_e Kronos_IngressWait(void)
 {
     if ((g_schedulerStarted == 0U) || (g_currentTask >= g_numTasks))
     {
         return KRONOS_STATUS_ERROR;
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_INGRESS_WAIT, NULL, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_INGRESS_WAIT, NULL, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_IngressReceiveWait(kronos_mail_t *message)
+kronos_status_e Kronos_IngressReceiveWait(kronos_mail_t *message)
 {
     kronos_status_e status;
 
@@ -602,22 +602,22 @@ kronos_status_e RTOS_IngressReceiveWait(kronos_mail_t *message)
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    status = RTOS_IngressReceive(message);
+    status = Kronos_IngressReceive(message);
     while (status == KRONOS_STATUS_EMPTY)
     {
-        status = RTOS_IngressWait();
+        status = Kronos_IngressWait();
         if (status != KRONOS_STATUS_OK)
         {
             return status;
         }
 
-        status = RTOS_IngressReceive(message);
+        status = Kronos_IngressReceive(message);
     }
 
     return status;
 }
 
-uint32_t RTOS_IngressPendingCount(void)
+uint32_t Kronos_IngressPendingCount(void)
 {
     if (g_currentTask >= g_numTasks)
     {
@@ -627,7 +627,7 @@ uint32_t RTOS_IngressPendingCount(void)
     return g_ingressState[g_currentTask].pending_count;
 }
 
-kronos_status_e RTOS_IngressPendingCountByName(const char *taskName, uint32_t *pendingCount)
+kronos_status_e Kronos_IngressPendingCountByName(const char *taskName, uint32_t *pendingCount)
 {
     int32_t taskIndex;
 
@@ -636,7 +636,7 @@ kronos_status_e RTOS_IngressPendingCountByName(const char *taskName, uint32_t *p
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    taskIndex = Kronos_TaskFindByName(taskName);
+    taskIndex = kronos_task_find_by_name(taskName);
     if (taskIndex < 0)
     {
         return KRONOS_STATUS_NOT_FOUND;
@@ -646,13 +646,13 @@ kronos_status_e RTOS_IngressPendingCountByName(const char *taskName, uint32_t *p
     return KRONOS_STATUS_OK;
 }
 
-void Kronos_ChannelsResetState(void)
+void kronos_channels_reset_state(void)
 {
     kronos_channels_init_ingress_state();
     kronos_channels_init_free_list();
 }
 
-void Kronos_ChannelsCleanupTask(kronos_task_id_t taskId)
+void kronos_channels_cleanup_task(kronos_task_id_t taskId)
 {
     uint32_t taskIndex;
 
@@ -667,7 +667,7 @@ void Kronos_ChannelsCleanupTask(kronos_task_id_t taskId)
     }
 }
 
-void Kronos_ChannelsIngressReceive(kronos_mail_t *message, kronos_service_outcome_t *outcome)
+void kronos_channels_ingress_receive(kronos_mail_t *message, kronos_service_outcome_t *outcome)
 {
     int32_t slotIndex;
 
@@ -689,7 +689,7 @@ void Kronos_ChannelsIngressReceive(kronos_mail_t *message, kronos_service_outcom
     kronos_channels_set_outcome(outcome, KRONOS_STATUS_OK, 0U);
 }
 
-void Kronos_ChannelsIngressWait(kronos_service_outcome_t *outcome)
+void kronos_channels_ingress_wait(kronos_service_outcome_t *outcome)
 {
     if (g_ingressState[g_currentTask].pending_count > 0U)
     {
@@ -703,11 +703,11 @@ void Kronos_ChannelsIngressWait(kronos_service_outcome_t *outcome)
         return;
     }
 
-    Kronos_TaskBlock(&g_tasks[g_currentTask], KRONOS_WAIT_INGRESS, &g_ingressState[g_currentTask]);
+    kronos_task_block(&g_tasks[g_currentTask], KRONOS_WAIT_INGRESS, &g_ingressState[g_currentTask]);
     kronos_channels_set_outcome(outcome, KRONOS_STATUS_OK, 0U);
 }
 
-void Kronos_ChannelsEgressSend(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome)
+void kronos_channels_egress_send(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome)
 {
     int32_t taskIndex;
     kronos_status_e status;
@@ -733,7 +733,7 @@ void Kronos_ChannelsEgressSend(const kronos_channel_request_t *request, kronos_s
     kronos_channels_set_outcome(outcome, status, (outcome != NULL) ? outcome->switch_required : 0U);
 }
 
-void Kronos_ChannelsEgressBroadcast(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome)
+void kronos_channels_egress_broadcast(const kronos_channel_request_t *request, kronos_service_outcome_t *outcome)
 {
     uint32_t targetCount;
     uint32_t taskIndex;

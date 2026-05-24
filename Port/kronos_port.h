@@ -52,18 +52,18 @@ a separate license is required. Contact:
     __attribute__((section(".kronos_task_stacks"), aligned(KRONOS_PORT_STACK_POOL_ALIGNMENT_BYTES)))
 
 /******************************************************************************
-* Declaration | Public Functions
+* Declaration | Internal Functions
 ******************************************************************************/
 
-void Kronos_PortInitScheduler(uint32_t tickFrequencyHz);
-void Kronos_PortStartScheduler(void);
-void Kronos_PortRequestYield(void);
-void Kronos_PortPendContextSwitch(void);
-void Kronos_PortConfigureTaskStackRegion(const uint32_t *stackBase, uint32_t stackWords);
-uint32_t *Kronos_PortGetLiveProcessStackPointer(void);
-uint32_t Kronos_PortComputeTaskSlotWords(uint32_t requestedStackWords);
-uint32_t Kronos_PortGetDefaultClockHz(void);
-uint32_t Kronos_PortGetStackWarningMarginWords(void);
+void kronos_port_init_scheduler(uint32_t tickFrequencyHz);
+void kronos_port_start_scheduler(void);
+void kronos_port_request_yield(void);
+void kronos_port_pend_context_switch(void);
+void kronos_port_configure_task_stack_region(const uint32_t *stackBase, uint32_t stackWords);
+uint32_t *kronos_port_get_live_process_stack_pointer(void);
+uint32_t kronos_port_compute_task_slot_words(uint32_t requestedStackWords);
+uint32_t kronos_port_get_default_clock_hz(void);
+uint32_t kronos_port_get_stack_warning_margin_words(void);
 
 /******************************************************************************
 * EOF - NO CODE AFTER THIS LINE

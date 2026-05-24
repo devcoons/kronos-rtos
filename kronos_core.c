@@ -39,38 +39,38 @@ a separate license is required. Contact:
 * Definition | Public Functions
 ******************************************************************************/
 
-void RTOS_Init(void)
+void Kronos_Init(void)
 {
-    Kronos_SchedulerResetState();
-    Kronos_TasksResetState();
-    Kronos_SyncResetState();
-    Kronos_ChannelsResetState();
-    Kronos_TaskUpdateAllStats();
+    kronos_scheduler_reset_state();
+    kronos_tasks_reset_state();
+    kronos_sync_reset_state();
+    kronos_channels_reset_state();
+    kronos_task_update_all_stats();
 }
 
-kronos_status_e RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName)
+kronos_status_e Kronos_TaskCreate(void (*taskFunction)(void), uint32_t stackWords, const char *taskName)
 {
     kronos_task_create_request_t request;
 
     if (g_schedulerStarted == 0U)
     {
-        return Kronos_TaskCreateInternal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, NULL);
+        return kronos_task_create_internal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, NULL);
     }
 
     request.task_function = taskFunction;
     request.task_name = taskName;
     request.stack_words = stackWords;
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_CREATE, &request, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_CREATE, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-const TCB_t *RTOS_GetTaskTable(void)
+const TCB_t *Kronos_GetTaskTable(void)
 {
     return g_tasks;
 }
 
-uint32_t RTOS_GetTaskCount(void)
+uint32_t Kronos_GetTaskCount(void)
 {
     return g_numTasks;
 }

@@ -172,56 +172,40 @@ extern uint32_t g_currentTask;
 * Declaration | Public Functions
 ******************************************************************************/
 
-void RTOS_Init(void);
-kronos_status_e RTOS_CreateTask(void (*taskFunction)(void), uint32_t stackWords, const char *taskName);
-kronos_status_e RTOS_TaskDelete(const char *taskName);
-kronos_status_e RTOS_TaskPause(const char *taskName);
-kronos_status_e RTOS_TaskResume(const char *taskName);
-kronos_status_e RTOS_DriverInit(kronos_driver_init_fn_t initFunction, void *context);
-kronos_status_e RTOS_IngressResolve(kronos_ingress_t *ingress, const char *taskName);
-kronos_status_e RTOS_EgressSend(const kronos_ingress_t *ingress, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
-kronos_status_e RTOS_EgressSendByName(const char *taskName, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
-kronos_status_e RTOS_EgressBroadcast(uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
-kronos_status_e RTOS_IngressReceive(kronos_mail_t *message);
-kronos_status_e RTOS_IngressWait(void);
-kronos_status_e RTOS_IngressReceiveWait(kronos_mail_t *message);
-uint32_t RTOS_IngressPendingCount(void);
-kronos_status_e RTOS_IngressPendingCountByName(const char *taskName, uint32_t *pendingCount);
-kronos_status_e RTOS_MutexInit(kronos_mutex_t *mutex);
-kronos_status_e RTOS_MutexLock(kronos_mutex_t *mutex);
-kronos_status_e RTOS_MutexUnlock(kronos_mutex_t *mutex);
-kronos_status_e RTOS_SemaphoreInit(kronos_semaphore_t *semaphore, uint32_t initialCount, uint32_t maxCount);
-kronos_status_e RTOS_SemaphoreTake(kronos_semaphore_t *semaphore);
-kronos_status_e RTOS_SemaphoreGive(kronos_semaphore_t *semaphore);
-void RTOS_SuspendScheduler(void);
-void RTOS_ResumeScheduler(void);
-void RTOS_ForceSwitch(void);
-void RTOS_Start(void);
-void RTOS_Delay(uint32_t ms);
-void Scheduler_RoundRobin(void);
-const TCB_t *RTOS_GetTaskTable(void);
-uint32_t RTOS_GetTaskCount(void);
+void Kronos_Init(void);
+kronos_status_e Kronos_TaskCreate(void (*taskFunction)(void), uint32_t stackWords, const char *taskName);
+kronos_status_e Kronos_TaskDelete(const char *taskName);
+kronos_status_e Kronos_TaskPause(const char *taskName);
+kronos_status_e Kronos_TaskResume(const char *taskName);
+kronos_status_e Kronos_DriverInit(kronos_driver_init_fn_t initFunction, void *context);
+kronos_status_e Kronos_IngressResolve(kronos_ingress_t *ingress, const char *taskName);
+kronos_status_e Kronos_EgressSend(const kronos_ingress_t *ingress, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
+kronos_status_e Kronos_EgressSendByName(const char *taskName, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
+kronos_status_e Kronos_EgressBroadcast(uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);
+kronos_status_e Kronos_IngressReceive(kronos_mail_t *message);
+kronos_status_e Kronos_IngressWait(void);
+kronos_status_e Kronos_IngressReceiveWait(kronos_mail_t *message);
+uint32_t Kronos_IngressPendingCount(void);
+kronos_status_e Kronos_IngressPendingCountByName(const char *taskName, uint32_t *pendingCount);
+kronos_status_e Kronos_MutexInit(kronos_mutex_t *mutex);
+kronos_status_e Kronos_MutexLock(kronos_mutex_t *mutex);
+kronos_status_e Kronos_MutexUnlock(kronos_mutex_t *mutex);
+kronos_status_e Kronos_SemaphoreInit(kronos_semaphore_t *semaphore, uint32_t initialCount, uint32_t maxCount);
+kronos_status_e Kronos_SemaphoreTake(kronos_semaphore_t *semaphore);
+kronos_status_e Kronos_SemaphoreGive(kronos_semaphore_t *semaphore);
+void Kronos_SuspendScheduler(void);
+void Kronos_ResumeScheduler(void);
+void Kronos_ForceSwitch(void);
+void Kronos_Start(void);
+void Kronos_Delay(uint32_t ms);
+const TCB_t *Kronos_GetTaskTable(void);
+uint32_t Kronos_GetTaskCount(void);
 
-#define RTOS_EgressSendStruct(targetTaskName, messageId, objectPtr) \
-    RTOS_EgressSendByName((targetTaskName), (messageId), (objectPtr), (uint32_t)sizeof(*(objectPtr)))
+#define Kronos_EgressSendStruct(targetTaskName, messageId, objectPtr) \
+    Kronos_EgressSendByName((targetTaskName), (messageId), (objectPtr), (uint32_t)sizeof(*(objectPtr)))
 
-#define RTOS_EgressSendStructToIngress(ingressPtr, messageId, objectPtr) \
-    RTOS_EgressSend((ingressPtr), (messageId), (objectPtr), (uint32_t)sizeof(*(objectPtr)))
-
-static inline void SuspendScheduler(void)
-{
-    RTOS_SuspendScheduler();
-}
-
-static inline void ResumeScheduler(void)
-{
-    RTOS_ResumeScheduler();
-}
-
-static inline void ForceSwitch(void)
-{
-    RTOS_ForceSwitch();
-}
+#define Kronos_EgressSendStructToIngress(ingressPtr, messageId, objectPtr) \
+    Kronos_EgressSend((ingressPtr), (messageId), (objectPtr), (uint32_t)sizeof(*(objectPtr)))
 
 /******************************************************************************
 * EOF - NO CODE AFTER THIS LINE

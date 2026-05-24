@@ -29,57 +29,60 @@ KronOS is intentionally small, but it already includes the main kernel services 
 - privileged atomic driver initialization from a task
 - per-task stack tracking and fault quarantine support
 
-The public API is in `Libs/KrRtos/kronos_core.h`.
+The public API is in `Libs/KronosRTOS/kronos_core.h`.
+
+Naming convention:
+
+- Public application APIs use `Kronos_*`, for example `Kronos_TaskCreate()`.
+- Internal kernel and port routines use `kronos_*`, for example `kronos_task_create_internal()`.
+- STM32 interrupt handlers keep their CMSIS-required names, such as `SysTick_Handler()`.
 
 ## Main API groups
 
 Task control:
 
-- `RTOS_Init()`
-- `RTOS_CreateTask()`
-- `RTOS_TaskDelete()`
-- `RTOS_TaskDelete(taskName)`
-- `RTOS_Start()`
-- `RTOS_Delay()`
-- `RTOS_TaskPause()`
-- `RTOS_TaskPause(taskName)`
-- `RTOS_TaskResume()`
-- `RTOS_TaskResume(taskName)`
-- `RTOS_DriverInit()`
-- `RTOS_GetTaskTable()`
-- `RTOS_GetTaskCount()`
+- `Kronos_Init()`
+- `Kronos_TaskCreate()`
+- `Kronos_TaskDelete()`
+- `Kronos_Start()`
+- `Kronos_Delay()`
+- `Kronos_TaskPause()`
+- `Kronos_TaskResume()`
+- `Kronos_DriverInit()`
+- `Kronos_GetTaskTable()`
+- `Kronos_GetTaskCount()`
 
 Synchronization:
 
-- `RTOS_MutexInit()`
-- `RTOS_MutexLock()`
-- `RTOS_MutexUnlock()`
-- `RTOS_SemaphoreInit()`
-- `RTOS_SemaphoreTake()`
-- `RTOS_SemaphoreGive()`
-- `RTOS_SuspendScheduler()`
-- `RTOS_ResumeScheduler()`
-- `RTOS_ForceSwitch()`
+- `Kronos_MutexInit()`
+- `Kronos_MutexLock()`
+- `Kronos_MutexUnlock()`
+- `Kronos_SemaphoreInit()`
+- `Kronos_SemaphoreTake()`
+- `Kronos_SemaphoreGive()`
+- `Kronos_SuspendScheduler()`
+- `Kronos_ResumeScheduler()`
+- `Kronos_ForceSwitch()`
 
 Mailboxes:
 
-- `RTOS_IngressResolve()`
-- `RTOS_EgressSend()`
-- `RTOS_EgressSendByName()`
-- `RTOS_EgressBroadcast()`
-- `RTOS_IngressReceive()`
-- `RTOS_IngressWait()`
-- `RTOS_IngressReceiveWait()`
-- `RTOS_IngressPendingCount()`
-- `RTOS_IngressPendingCountByName()`
+- `Kronos_IngressResolve()`
+- `Kronos_EgressSend()`
+- `Kronos_EgressSendByName()`
+- `Kronos_EgressBroadcast()`
+- `Kronos_IngressReceive()`
+- `Kronos_IngressWait()`
+- `Kronos_IngressReceiveWait()`
+- `Kronos_IngressPendingCount()`
+- `Kronos_IngressPendingCountByName()`
 
 Important mailbox notes:
 
 - Task names must be unique.
 - Task names are the normal mailbox identifiers.
 - Messages carry a message ID plus a byte payload.
-- `RTOS_IngressWait()` moves the current task into an internal waiting state until new mail arrives.
-- `RTOS_EgressBroadcast()` sends one copy to each ingress-capable task.
+- `Kronos_IngressWait()` moves the current task into an internal waiting state until new mail arrives.
+- `Kronos_EgressBroadcast()` sends one copy to each ingress-capable task.
 
 ## Very small task example
 
@@ -91,7 +94,7 @@ static void blink_task(void)
     for (;;)
     {
         /* Toggle your LED here */
-        RTOS_Delay(250U);
+        Kronos_Delay(250U);
     }
 }
 
@@ -99,16 +102,16 @@ int main(void)
 {
     /* Clock init, GPIO init, board init... */
 
-    RTOS_Init();
+    Kronos_Init();
 
-    if (RTOS_CreateTask(blink_task, 64U, "blink") != KRONOS_STATUS_OK)
+    if (Kronos_TaskCreate(blink_task, 64U, "blink") != KRONOS_STATUS_OK)
     {
         for (;;)
         {
         }
     }
 
-    RTOS_Start();
+    Kronos_Start();
 
     for (;;)
     {
@@ -120,10 +123,10 @@ Notes:
 
 - Task functions must be `void task(void)`.
 - A task should normally run forever. If it returns, KronOS deletes/stops it through the cleanup path.
-- `RTOS_Start()` is not expected to return.
+- `Kronos_Start()` is not expected to return.
 - `stackWords` is in 32-bit words, not bytes.
 - `64U` means 64 words, which is 256 bytes.
-- `RTOS_CreateTask()` returns a status code only.
+- `Kronos_TaskCreate()` returns a status code only.
 - Task control APIs use task names, not task IDs.
 
 ## Simple mailbox example
@@ -145,8 +148,8 @@ static void producer_task(void)
     for (;;)
     {
         message.counter++;
-        (void)RTOS_EgressSendStruct("consumer", 1U, &message);
-        RTOS_Delay(1000U);
+        (void)Kronos_EgressSendStruct("consumer", 1U, &message);
+        Kronos_Delay(1000U);
     }
 }
 
@@ -157,7 +160,7 @@ static void consumer_task(void)
 
     for (;;)
     {
-        if (RTOS_IngressReceiveWait(&mail) == KRONOS_STATUS_OK)
+        if (Kronos_IngressReceiveWait(&mail) == KRONOS_STATUS_OK)
         {
             payload = (const counter_mail_t *)mail.payload;
             (void)payload;
@@ -258,7 +261,7 @@ uint32_t SystemCoreClock;
 
 Important:
 
-- `SystemCoreClock` must match the real CPU clock before `RTOS_Start()`.
+- `SystemCoreClock` must match the real CPU clock before `Kronos_Start()`.
 - If the clock changes, update `SystemCoreClock` first.
 - KronOS does not require your `system_xxx.c` file to include RTOS headers.
 
@@ -296,9 +299,9 @@ Your startup code should leave these handlers weak, or at least not replace them
 Typical order:
 
 1. Initialize board and clock.
-2. Call `RTOS_Init()`.
+2. Call `Kronos_Init()`.
 3. Create initial application tasks.
-4. Call `RTOS_Start()`.
+4. Call `Kronos_Start()`.
 
 Tasks can also create or delete application tasks after the scheduler starts. Runtime creation and deletion are performed through the kernel service path.
 
@@ -327,11 +330,11 @@ Then add the correct STM32 family define for your target.
 
 - There is always one internal idle task.
 - Task stacks come from a fixed pool.
-- If task creation fails, `RTOS_CreateTask()` returns a `kronos_status_e` error code.
+- If task creation fails, `Kronos_TaskCreate()` returns a `kronos_status_e` error code.
 - Task operations such as delete, pause, and resume are name-based.
 - Deleted tasks release pending mailbox messages. If a deleted task owns a registered mutex, KronOS releases it and wakes one waiter.
 - Mutexes and semaphores must be initialized before use. KronOS rejects uninitialized sync objects.
-- The default tick is `1000 Hz`, so `RTOS_Delay()` uses milliseconds in the current code.
+- The default tick is `1000 Hz`, so `Kronos_Delay()` uses milliseconds in the current code.
 - Stack sizing and limits can be adjusted in `Libs/KrRtos/kronos_core.h`.
 - Mailboxes use a fixed global slot pool and a bounded payload size.
 

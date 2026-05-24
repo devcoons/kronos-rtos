@@ -91,11 +91,11 @@ static void kronos_idle_task(void)
 
 static void kronos_task_exit(void)
 {
-    (void)RTOS_TaskDelete(g_tasks[g_currentTask].task_name);
+    (void)Kronos_TaskDelete(g_tasks[g_currentTask].task_name);
 
     for (;;)
     {
-        Kronos_PortRequestYield();
+        kronos_port_request_yield();
     }
 }
 
@@ -123,7 +123,7 @@ static uint32_t kronos_clamp_warning_margin(uint32_t requestedStackWords)
 {
     uint32_t warningWords;
 
-    warningWords = Kronos_PortGetStackWarningMarginWords();
+    warningWords = kronos_port_get_stack_warning_margin_words();
     if (warningWords >= requestedStackWords)
     {
         warningWords = requestedStackWords / 2U;
@@ -258,7 +258,7 @@ static void kronos_task_clear_runtime(uint32_t taskIndex)
 * Definition | Public Functions
 ******************************************************************************/
 
-void Kronos_TasksResetState(void)
+void kronos_tasks_reset_state(void)
 {
     kronos_task_id_t idleTaskId;
 
@@ -268,10 +268,10 @@ void Kronos_TasksResetState(void)
     g_currentTask = 0U;
     g_stackPoolWordsUsed = 0U;
 
-    (void)Kronos_TaskCreateInternal(kronos_idle_task, IDLE_TASK_STACK_SIZE_WORDS, "kronos_idle", TASK_KIND_IDLE, &idleTaskId);
+    (void)kronos_task_create_internal(kronos_idle_task, IDLE_TASK_STACK_SIZE_WORDS, "kronos_idle", TASK_KIND_IDLE, &idleTaskId);
 }
 
-kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind, kronos_task_id_t *taskId)
+kronos_status_e kronos_task_create_internal(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, task_kind_e taskKind, kronos_task_id_t *taskId)
 {
     TCB_t *tcb;
     uint32_t *stackBase;
@@ -294,7 +294,7 @@ kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t s
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    if (Kronos_TaskFindByName(taskName) >= 0)
+    if (kronos_task_find_by_name(taskName) >= 0)
     {
         return KRONOS_STATUS_IN_USE;
     }
@@ -307,7 +307,7 @@ kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t s
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    requestedSlotWords = Kronos_PortComputeTaskSlotWords(effectiveStackWords);
+    requestedSlotWords = kronos_port_compute_task_slot_words(effectiveStackWords);
     taskIndex = kronos_task_find_slot(requestedSlotWords, &reuseExistingStack);
     if (taskIndex < 0)
     {
@@ -369,7 +369,7 @@ kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t s
     }
 
     tcb->stack_top_ptr = stackCursor;
-    Kronos_TaskUpdateStackMetrics(tcb, stackCursor);
+    kronos_task_update_stack_metrics(tcb, stackCursor);
 
     if ((uint32_t)taskIndex == g_numTasks)
     {
@@ -383,7 +383,7 @@ kronos_status_e Kronos_TaskCreateInternal(void (*taskFunction)(void), uint32_t s
     return KRONOS_STATUS_OK;
 }
 
-kronos_status_e RTOS_TaskDelete(const char *taskName)
+kronos_status_e Kronos_TaskDelete(const char *taskName)
 {
     kronos_task_id_t taskId;
 
@@ -392,7 +392,7 @@ kronos_status_e RTOS_TaskDelete(const char *taskName)
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    taskId = (kronos_task_id_t)Kronos_TaskFindByName(taskName);
+    taskId = (kronos_task_id_t)kronos_task_find_by_name(taskName);
     if (taskId == KRONOS_INVALID_TASK_ID)
     {
         return KRONOS_STATUS_NOT_FOUND;
@@ -400,14 +400,14 @@ kronos_status_e RTOS_TaskDelete(const char *taskName)
 
     if (g_schedulerStarted == 0U)
     {
-        return Kronos_TaskDeleteInternal(taskId);
+        return kronos_task_delete_internal(taskId);
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_DELETE, (void *)taskName, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_DELETE, (void *)taskName, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_TaskPause(const char *taskName)
+kronos_status_e Kronos_TaskPause(const char *taskName)
 {
     kronos_task_id_t taskId;
 
@@ -416,7 +416,7 @@ kronos_status_e RTOS_TaskPause(const char *taskName)
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    taskId = (kronos_task_id_t)Kronos_TaskFindByName(taskName);
+    taskId = (kronos_task_id_t)kronos_task_find_by_name(taskName);
     if (taskId == KRONOS_INVALID_TASK_ID)
     {
         return KRONOS_STATUS_NOT_FOUND;
@@ -424,14 +424,14 @@ kronos_status_e RTOS_TaskPause(const char *taskName)
 
     if (g_schedulerStarted == 0U)
     {
-        return Kronos_TaskPauseInternal(taskId);
+        return kronos_task_pause_internal(taskId);
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_PAUSE, (void *)taskName, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_PAUSE, (void *)taskName, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_TaskResume(const char *taskName)
+kronos_status_e Kronos_TaskResume(const char *taskName)
 {
     kronos_task_id_t taskId;
 
@@ -440,7 +440,7 @@ kronos_status_e RTOS_TaskResume(const char *taskName)
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    taskId = (kronos_task_id_t)Kronos_TaskFindByName(taskName);
+    taskId = (kronos_task_id_t)kronos_task_find_by_name(taskName);
     if (taskId == KRONOS_INVALID_TASK_ID)
     {
         return KRONOS_STATUS_NOT_FOUND;
@@ -448,14 +448,14 @@ kronos_status_e RTOS_TaskResume(const char *taskName)
 
     if (g_schedulerStarted == 0U)
     {
-        return Kronos_TaskResumeInternal(taskId);
+        return kronos_task_resume_internal(taskId);
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_TASK_RESUME, (void *)taskName, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_RESUME, (void *)taskName, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId)
+kronos_status_e kronos_task_delete_internal(kronos_task_id_t taskId)
 {
     TCB_t *tcb;
 
@@ -480,8 +480,8 @@ kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId)
     tcb->task_state = TASK_STATE_DELETING;
     tcb->remaining_delay = 0U;
 
-    Kronos_ChannelsCleanupTask(taskId);
-    Kronos_SyncCleanupTask(taskId);
+    kronos_channels_cleanup_task(taskId);
+    kronos_sync_cleanup_task(taskId);
     kronos_task_clear_runtime(taskId);
 
     tcb->task_fn = NULL;
@@ -495,7 +495,7 @@ kronos_status_e Kronos_TaskDeleteInternal(kronos_task_id_t taskId)
     return KRONOS_STATUS_OK;
 }
 
-kronos_status_e Kronos_TaskPauseInternal(kronos_task_id_t taskId)
+kronos_status_e kronos_task_pause_internal(kronos_task_id_t taskId)
 {
     if ((taskId >= g_numTasks) || (taskId == g_currentTask))
     {
@@ -522,7 +522,7 @@ kronos_status_e Kronos_TaskPauseInternal(kronos_task_id_t taskId)
     return KRONOS_STATUS_OK;
 }
 
-kronos_status_e Kronos_TaskResumeInternal(kronos_task_id_t taskId)
+kronos_status_e kronos_task_resume_internal(kronos_task_id_t taskId)
 {
     if (taskId >= g_numTasks)
     {
@@ -550,7 +550,7 @@ kronos_status_e Kronos_TaskResumeInternal(kronos_task_id_t taskId)
     return KRONOS_STATUS_OK;
 }
 
-void Kronos_TaskUpdateStackMetrics(TCB_t *tcb, const uint32_t *stackPtr)
+void kronos_task_update_stack_metrics(TCB_t *tcb, const uint32_t *stackPtr)
 {
     uint32_t stackUsedWords;
     uint32_t freeWords;
@@ -566,9 +566,9 @@ void Kronos_TaskUpdateStackMetrics(TCB_t *tcb, const uint32_t *stackPtr)
     }
 }
 
-kronos_stack_check_e Kronos_TaskCheckStack(TCB_t *tcb, const uint32_t *stackPtr)
+kronos_stack_check_e kronos_task_check_stack(TCB_t *tcb, const uint32_t *stackPtr)
 {
-    Kronos_TaskUpdateStackMetrics(tcb, stackPtr);
+    kronos_task_update_stack_metrics(tcb, stackPtr);
 
     if ((stackPtr == NULL) || ((uintptr_t)stackPtr < (uintptr_t)tcb->stack_slot_start_ptr))
     {
@@ -591,7 +591,7 @@ kronos_stack_check_e Kronos_TaskCheckStack(TCB_t *tcb, const uint32_t *stackPtr)
     return KRONOS_STACK_CHECK_OK;
 }
 
-void Kronos_TaskQuarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress)
+void kronos_task_quarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress)
 {
     kronos_task_runtime_t *runtimeState;
     uint32_t normalizedFaultFlags;
@@ -644,15 +644,15 @@ void Kronos_TaskQuarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFl
         if ((faultStackPtr != NULL) && ((uintptr_t)faultStackPtr >= stackStart) && ((uintptr_t)faultStackPtr < stackEnd))
         {
             tcb->stack_top_ptr = faultStackPtr;
-            Kronos_TaskUpdateStackMetrics(tcb, faultStackPtr);
+            kronos_task_update_stack_metrics(tcb, faultStackPtr);
         }
     }
 
-    Kronos_ChannelsCleanupTask((kronos_task_id_t)taskIndex);
-    Kronos_SyncCleanupTask((kronos_task_id_t)taskIndex);
+    kronos_channels_cleanup_task((kronos_task_id_t)taskIndex);
+    kronos_sync_cleanup_task((kronos_task_id_t)taskIndex);
 }
 
-int32_t Kronos_TaskFindNextReady(task_kind_e taskKind, uint32_t startTask)
+int32_t kronos_task_find_next_ready(task_kind_e taskKind, uint32_t startTask)
 {
     uint32_t candidateTask;
     uint32_t searchedTasks;
@@ -673,7 +673,7 @@ int32_t Kronos_TaskFindNextReady(task_kind_e taskKind, uint32_t startTask)
     return -1;
 }
 
-int32_t Kronos_TaskFindByName(const char *taskName)
+int32_t kronos_task_find_by_name(const char *taskName)
 {
     uint32_t taskIndex;
 
@@ -694,7 +694,7 @@ int32_t Kronos_TaskFindByName(const char *taskName)
     return -1;
 }
 
-int32_t Kronos_TaskFindWaiting(kronos_wait_reason_e waitReason, const void *waitObject, uint32_t startTask)
+int32_t kronos_task_find_waiting(kronos_wait_reason_e waitReason, const void *waitObject, uint32_t startTask)
 {
     uint32_t candidateTask;
     uint32_t searchedTasks;
@@ -716,7 +716,7 @@ int32_t Kronos_TaskFindWaiting(kronos_wait_reason_e waitReason, const void *wait
     return -1;
 }
 
-void Kronos_TaskBlock(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObject)
+void kronos_task_block(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObject)
 {
     kronos_task_runtime_t *runtimeState;
 
@@ -731,7 +731,7 @@ void Kronos_TaskBlock(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObj
     tcb->task_state = TASK_STATE_WAITING;
 }
 
-void Kronos_TaskUnblock(TCB_t *tcb)
+void kronos_task_unblock(TCB_t *tcb)
 {
     kronos_task_runtime_t *runtimeState;
 
@@ -746,23 +746,23 @@ void Kronos_TaskUnblock(TCB_t *tcb)
     tcb->task_state = TASK_STATE_READY;
 }
 
-uint32_t Kronos_TaskSelectStartTask(void)
+uint32_t kronos_task_select_start_task(void)
 {
     int32_t taskIndex;
 
-    taskIndex = Kronos_TaskFindNextReady(TASK_KIND_APPLICATION, g_numTasks - 1U);
+    taskIndex = kronos_task_find_next_ready(TASK_KIND_APPLICATION, g_numTasks - 1U);
     if (taskIndex >= 0)
     {
         return (uint32_t)taskIndex;
     }
 
-    taskIndex = Kronos_TaskFindNextReady(TASK_KIND_SYSTEM, g_numTasks - 1U);
+    taskIndex = kronos_task_find_next_ready(TASK_KIND_SYSTEM, g_numTasks - 1U);
     if (taskIndex >= 0)
     {
         return (uint32_t)taskIndex;
     }
 
-    taskIndex = Kronos_TaskFindNextReady(TASK_KIND_IDLE, g_numTasks - 1U);
+    taskIndex = kronos_task_find_next_ready(TASK_KIND_IDLE, g_numTasks - 1U);
     if (taskIndex >= 0)
     {
         return (uint32_t)taskIndex;
@@ -771,14 +771,14 @@ uint32_t Kronos_TaskSelectStartTask(void)
     return 0U;
 }
 
-void Kronos_TaskActivate(uint32_t taskIndex)
+void kronos_task_activate(uint32_t taskIndex)
 {
     g_currentTask = taskIndex;
     g_tasks[g_currentTask].task_state = TASK_STATE_RUNNING;
-    Kronos_PortConfigureTaskStackRegion(g_tasks[g_currentTask].stack_slot_start_ptr, g_tasks[g_currentTask].stack_slot_words);
+    kronos_port_configure_task_stack_region(g_tasks[g_currentTask].stack_slot_start_ptr, g_tasks[g_currentTask].stack_slot_words);
 }
 
-void Kronos_TaskUpdateAllStats(void)
+void kronos_task_update_all_stats(void)
 {
     uint32_t taskIndex;
 
@@ -788,14 +788,14 @@ void Kronos_TaskUpdateAllStats(void)
 
         if ((taskIndex == g_currentTask) && (g_tasks[taskIndex].task_state == TASK_STATE_RUNNING))
         {
-            stackPtr = Kronos_PortGetLiveProcessStackPointer();
+            stackPtr = kronos_port_get_live_process_stack_pointer();
         }
         else
         {
             stackPtr = g_tasks[taskIndex].stack_top_ptr;
         }
 
-        (void)Kronos_TaskCheckStack(&g_tasks[taskIndex], stackPtr);
+        (void)kronos_task_check_stack(&g_tasks[taskIndex], stackPtr);
     }
 }
 

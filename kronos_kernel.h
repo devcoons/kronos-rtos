@@ -57,12 +57,12 @@ typedef enum
 * Declaration | Internal Functions
 ******************************************************************************/
 
-void Kronos_CoreOnTick(void);
-kronos_stack_check_e Kronos_CoreCheckCurrentTaskStack(uint32_t *exceptionStackPtr);
-uint32_t *Kronos_CorePrepareFirstTask(void);
-uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr);
-uint32_t *Kronos_CoreSwitchTask(uint32_t *savedStackPtr);
-uint32_t *Kronos_CoreQuarantineCurrentTask(uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress);
+void kronos_core_on_tick(void);
+kronos_stack_check_e kronos_core_check_current_task_stack(uint32_t *exceptionStackPtr);
+uint32_t *kronos_core_prepare_first_task(void);
+uint32_t *kronos_core_handle_supervisor_call(uint32_t *savedStackPtr);
+uint32_t *kronos_core_switch_task(uint32_t *savedStackPtr);
+uint32_t *kronos_core_quarantine_current_task(uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress);
 
 /******************************************************************************
 * EOF - NO CODE AFTER THIS LINE

@@ -53,13 +53,13 @@ static int32_t kronos_sync_wake_waiter(kronos_wait_reason_e waitReason, void *wa
 {
     int32_t waitingTaskIndex;
 
-    waitingTaskIndex = Kronos_TaskFindWaiting(waitReason, waitObject, g_currentTask);
+    waitingTaskIndex = kronos_task_find_waiting(waitReason, waitObject, g_currentTask);
     if (waitingTaskIndex < 0)
     {
         return -1;
     }
 
-    Kronos_TaskUnblock(&g_tasks[waitingTaskIndex]);
+    kronos_task_unblock(&g_tasks[waitingTaskIndex]);
     if (g_schedulerSuspendDepth != 0U)
     {
         g_schedulerSwitchPending = 1U;
@@ -175,7 +175,7 @@ static uint32_t kronos_sync_semaphore_is_valid(const kronos_semaphore_t *semapho
 
 static uint32_t kronos_sync_has_waiter(kronos_wait_reason_e waitReason, const void *waitObject)
 {
-    return (Kronos_TaskFindWaiting(waitReason, waitObject, g_currentTask) >= 0) ? 1U : 0U;
+    return (kronos_task_find_waiting(waitReason, waitObject, g_currentTask) >= 0) ? 1U : 0U;
 }
 
 static void kronos_sync_release_owned_mutex(kronos_mutex_t *mutex, kronos_task_id_t taskId)
@@ -202,7 +202,7 @@ static void kronos_sync_release_owned_mutex(kronos_mutex_t *mutex, kronos_task_i
 * Definition | Public Functions
 ******************************************************************************/
 
-void Kronos_SyncResetState(void)
+void kronos_sync_reset_state(void)
 {
     uint32_t slotIndex;
 
@@ -213,7 +213,7 @@ void Kronos_SyncResetState(void)
     }
 }
 
-void Kronos_SyncCleanupTask(kronos_task_id_t taskId)
+void kronos_sync_cleanup_task(kronos_task_id_t taskId)
 {
     uint32_t slotIndex;
 
@@ -231,7 +231,7 @@ void Kronos_SyncCleanupTask(kronos_task_id_t taskId)
     }
 }
 
-kronos_status_e RTOS_MutexInit(kronos_mutex_t *mutex)
+kronos_status_e Kronos_MutexInit(kronos_mutex_t *mutex)
 {
     kronos_status_e status;
 
@@ -260,7 +260,7 @@ kronos_status_e RTOS_MutexInit(kronos_mutex_t *mutex)
     return status;
 }
 
-kronos_status_e RTOS_MutexLock(kronos_mutex_t *mutex)
+kronos_status_e Kronos_MutexLock(kronos_mutex_t *mutex)
 {
     if (kronos_sync_mutex_is_valid(mutex) == 0U)
     {
@@ -272,11 +272,11 @@ kronos_status_e RTOS_MutexLock(kronos_mutex_t *mutex)
         return KRONOS_STATUS_ERROR;
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_MUTEX_LOCK, mutex, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_MUTEX_LOCK, mutex, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_MutexUnlock(kronos_mutex_t *mutex)
+kronos_status_e Kronos_MutexUnlock(kronos_mutex_t *mutex)
 {
     if (kronos_sync_mutex_is_valid(mutex) == 0U)
     {
@@ -288,11 +288,11 @@ kronos_status_e RTOS_MutexUnlock(kronos_mutex_t *mutex)
         return KRONOS_STATUS_ERROR;
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_MUTEX_UNLOCK, mutex, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_MUTEX_UNLOCK, mutex, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_SemaphoreInit(kronos_semaphore_t *semaphore, uint32_t initialCount, uint32_t maxCount)
+kronos_status_e Kronos_SemaphoreInit(kronos_semaphore_t *semaphore, uint32_t initialCount, uint32_t maxCount)
 {
     kronos_status_e status;
 
@@ -321,7 +321,7 @@ kronos_status_e RTOS_SemaphoreInit(kronos_semaphore_t *semaphore, uint32_t initi
     return status;
 }
 
-kronos_status_e RTOS_SemaphoreTake(kronos_semaphore_t *semaphore)
+kronos_status_e Kronos_SemaphoreTake(kronos_semaphore_t *semaphore)
 {
     if (kronos_sync_semaphore_is_valid(semaphore) == 0U)
     {
@@ -333,11 +333,11 @@ kronos_status_e RTOS_SemaphoreTake(kronos_semaphore_t *semaphore)
         return KRONOS_STATUS_ERROR;
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_SEMAPHORE_TAKE, semaphore, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_SEMAPHORE_TAKE, semaphore, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-kronos_status_e RTOS_SemaphoreGive(kronos_semaphore_t *semaphore)
+kronos_status_e Kronos_SemaphoreGive(kronos_semaphore_t *semaphore)
 {
     if (kronos_sync_semaphore_is_valid(semaphore) == 0U)
     {
@@ -349,11 +349,11 @@ kronos_status_e RTOS_SemaphoreGive(kronos_semaphore_t *semaphore)
         return KRONOS_STATUS_ERROR;
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_SEMAPHORE_GIVE, semaphore, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_SEMAPHORE_GIVE, semaphore, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-void Kronos_SyncMutexLock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome)
+void kronos_sync_mutex_lock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome)
 {
     if ((currentTcb == NULL) || (kronos_sync_mutex_is_valid(mutex) == 0U))
     {
@@ -388,11 +388,11 @@ void Kronos_SyncMutexLock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_servi
         return;
     }
 
-    Kronos_TaskBlock(currentTcb, KRONOS_WAIT_MUTEX, mutex);
+    kronos_task_block(currentTcb, KRONOS_WAIT_MUTEX, mutex);
     kronos_sync_set_outcome(outcome, KRONOS_STATUS_OK, 0U);
 }
 
-void Kronos_SyncMutexUnlock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome)
+void kronos_sync_mutex_unlock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_service_outcome_t *outcome)
 {
     int32_t waitingTaskIndex;
 
@@ -429,7 +429,7 @@ void Kronos_SyncMutexUnlock(TCB_t *currentTcb, kronos_mutex_t *mutex, kronos_ser
     kronos_sync_set_outcome(outcome, KRONOS_STATUS_OK, 0U);
 }
 
-void Kronos_SyncSemaphoreTake(TCB_t *currentTcb, kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome)
+void kronos_sync_semaphore_take(TCB_t *currentTcb, kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome)
 {
     if ((currentTcb == NULL) || (kronos_sync_semaphore_is_valid(semaphore) == 0U))
     {
@@ -450,11 +450,11 @@ void Kronos_SyncSemaphoreTake(TCB_t *currentTcb, kronos_semaphore_t *semaphore, 
         return;
     }
 
-    Kronos_TaskBlock(currentTcb, KRONOS_WAIT_SEMAPHORE, semaphore);
+    kronos_task_block(currentTcb, KRONOS_WAIT_SEMAPHORE, semaphore);
     kronos_sync_set_outcome(outcome, KRONOS_STATUS_OK, 0U);
 }
 
-void Kronos_SyncSemaphoreGive(kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome)
+void kronos_sync_semaphore_give(kronos_semaphore_t *semaphore, kronos_service_outcome_t *outcome)
 {
     if (kronos_sync_semaphore_is_valid(semaphore) == 0U)
     {

@@ -56,6 +56,7 @@ static int32_t kronos_scheduler_select_next_ready_task(uint32_t startTask);
 static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr);
 static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_request_t *request);
 static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init_request_t *request);
+static void kronos_scheduler_round_robin(void);
 
 /******************************************************************************
 * Definition | Static Functions
@@ -64,7 +65,7 @@ static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init
 static void kronos_scheduler_store_current_context(uint32_t *savedStackPtr)
 {
     g_tasks[g_currentTask].stack_top_ptr = savedStackPtr;
-    Kronos_TaskUpdateStackMetrics(&g_tasks[g_currentTask], savedStackPtr);
+    kronos_task_update_stack_metrics(&g_tasks[g_currentTask], savedStackPtr);
 }
 
 static uint32_t *kronos_scheduler_keep_current_running(uint32_t *savedStackPtr)
@@ -93,14 +94,14 @@ static int32_t kronos_scheduler_select_next_ready_task(uint32_t startTask)
 {
     int32_t nextTaskIndex;
 
-    nextTaskIndex = Kronos_TaskFindNextReady(TASK_KIND_APPLICATION, startTask);
+    nextTaskIndex = kronos_task_find_next_ready(TASK_KIND_APPLICATION, startTask);
     if (nextTaskIndex < 0)
     {
-        nextTaskIndex = Kronos_TaskFindNextReady(TASK_KIND_SYSTEM, startTask);
+        nextTaskIndex = kronos_task_find_next_ready(TASK_KIND_SYSTEM, startTask);
     }
     if (nextTaskIndex < 0)
     {
-        nextTaskIndex = Kronos_TaskFindNextReady(TASK_KIND_IDLE, startTask);
+        nextTaskIndex = kronos_task_find_next_ready(TASK_KIND_IDLE, startTask);
     }
 
     return nextTaskIndex;
@@ -114,7 +115,7 @@ static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr)
         return kronos_scheduler_keep_current_running(savedStackPtr);
     }
 
-    Scheduler_RoundRobin();
+    kronos_scheduler_round_robin();
     return g_tasks[g_currentTask].stack_top_ptr;
 }
 
@@ -125,7 +126,7 @@ static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_req
         return KRONOS_STATUS_INVALID_ARGUMENT;
     }
 
-    return Kronos_TaskCreateInternal(request->task_function,
+    return kronos_task_create_internal(request->task_function,
                                      request->stack_words,
                                      request->task_name,
                                      TASK_KIND_APPLICATION,
@@ -146,7 +147,7 @@ static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init
 * Definition | Public Functions
 ******************************************************************************/
 
-void Kronos_SchedulerResetState(void)
+void kronos_scheduler_reset_state(void)
 {
     g_tickCount = 0U;
     g_schedulerStarted = 0U;
@@ -154,7 +155,7 @@ void Kronos_SchedulerResetState(void)
     g_schedulerSwitchPending = 0U;
 }
 
-void Kronos_SchedulerRequestService(kronos_service_e serviceRequest, void *serviceObject, uint32_t serviceParameter)
+void kronos_scheduler_request_service(kronos_service_e serviceRequest, void *serviceObject, uint32_t serviceParameter)
 {
     kronos_task_runtime_t *runtimeState;
 
@@ -169,32 +170,32 @@ void Kronos_SchedulerRequestService(kronos_service_e serviceRequest, void *servi
     runtimeState->service_parameter = serviceParameter;
     runtimeState->service_result = KRONOS_STATUS_OK;
 
-    Kronos_PortRequestYield();
+    kronos_port_request_yield();
 }
 
-void RTOS_Start(void)
+void Kronos_Start(void)
 {
     if (g_numTasks == 0U)
     {
         return;
     }
 
-    Kronos_PortInitScheduler(TICK_FREQ_HZ);
-    Kronos_TaskActivate(Kronos_TaskSelectStartTask());
-    Kronos_PortStartScheduler();
+    kronos_port_init_scheduler(TICK_FREQ_HZ);
+    kronos_task_activate(kronos_task_select_start_task());
+    kronos_port_start_scheduler();
 
     for (;;)
     {
     }
 }
 
-void RTOS_Delay(uint32_t ms)
+void Kronos_Delay(uint32_t ms)
 {
     uint32_t startTick;
 
     if (ms == 0U)
     {
-        RTOS_ForceSwitch();
+        Kronos_ForceSwitch();
         return;
     }
 
@@ -207,25 +208,25 @@ void RTOS_Delay(uint32_t ms)
         return;
     }
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_DELAY, NULL, ms);
+    kronos_scheduler_request_service(KRONOS_SERVICE_DELAY, NULL, ms);
 }
 
-void RTOS_SuspendScheduler(void)
+void Kronos_SuspendScheduler(void)
 {
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_SUSPEND_SCHEDULER, NULL, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_SUSPEND_SCHEDULER, NULL, 0U);
 }
 
-void RTOS_ResumeScheduler(void)
+void Kronos_ResumeScheduler(void)
 {
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_RESUME_SCHEDULER, NULL, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_RESUME_SCHEDULER, NULL, 0U);
 }
 
-void RTOS_ForceSwitch(void)
+void Kronos_ForceSwitch(void)
 {
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_FORCE_SWITCH, NULL, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_FORCE_SWITCH, NULL, 0U);
 }
 
-kronos_status_e RTOS_DriverInit(kronos_driver_init_fn_t initFunction, void *context)
+kronos_status_e Kronos_DriverInit(kronos_driver_init_fn_t initFunction, void *context)
 {
     kronos_driver_init_request_t request;
 
@@ -242,11 +243,11 @@ kronos_status_e RTOS_DriverInit(kronos_driver_init_fn_t initFunction, void *cont
     request.init_function = initFunction;
     request.context = context;
 
-    Kronos_SchedulerRequestService(KRONOS_SERVICE_DRIVER_INIT, &request, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_DRIVER_INIT, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
-void Scheduler_RoundRobin(void)
+static void kronos_scheduler_round_robin(void)
 {
     int32_t nextTaskIndex;
 
@@ -263,17 +264,17 @@ void Scheduler_RoundRobin(void)
     nextTaskIndex = kronos_scheduler_select_next_ready_task(g_currentTask);
     if (nextTaskIndex >= 0)
     {
-        Kronos_TaskActivate((uint32_t)nextTaskIndex);
+        kronos_task_activate((uint32_t)nextTaskIndex);
         return;
     }
 
     if (g_tasks[g_currentTask].task_state == TASK_STATE_READY)
     {
-        Kronos_TaskActivate(g_currentTask);
+        kronos_task_activate(g_currentTask);
     }
 }
 
-void Kronos_CoreOnTick(void)
+void kronos_core_on_tick(void)
 {
     uint32_t taskIndex;
 
@@ -306,22 +307,22 @@ void Kronos_CoreOnTick(void)
         return;
     }
 
-    Kronos_PortPendContextSwitch();
+    kronos_port_pend_context_switch();
 }
 
-kronos_stack_check_e Kronos_CoreCheckCurrentTaskStack(uint32_t *exceptionStackPtr)
+kronos_stack_check_e kronos_core_check_current_task_stack(uint32_t *exceptionStackPtr)
 {
-    return Kronos_TaskCheckStack(&g_tasks[g_currentTask], exceptionStackPtr);
+    return kronos_task_check_stack(&g_tasks[g_currentTask], exceptionStackPtr);
 }
 
-uint32_t *Kronos_CorePrepareFirstTask(void)
+uint32_t *kronos_core_prepare_first_task(void)
 {
     g_schedulerStarted = 1U;
-    Kronos_TaskUpdateStackMetrics(&g_tasks[g_currentTask], g_tasks[g_currentTask].stack_top_ptr);
+    kronos_task_update_stack_metrics(&g_tasks[g_currentTask], g_tasks[g_currentTask].stack_top_ptr);
     return g_tasks[g_currentTask].stack_top_ptr;
 }
 
-uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
+uint32_t *kronos_core_handle_supervisor_call(uint32_t *savedStackPtr)
 {
     TCB_t *currentTcb;
     const kronos_channel_request_t *channelRequest;
@@ -379,19 +380,19 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
             return kronos_scheduler_keep_current_running(savedStackPtr);
 
         case KRONOS_SERVICE_MUTEX_LOCK:
-            Kronos_SyncMutexLock(currentTcb, (kronos_mutex_t *)runtimeState->service_object_ptr, &outcome);
+            kronos_sync_mutex_lock(currentTcb, (kronos_mutex_t *)runtimeState->service_object_ptr, &outcome);
             break;
 
         case KRONOS_SERVICE_MUTEX_UNLOCK:
-            Kronos_SyncMutexUnlock(currentTcb, (kronos_mutex_t *)runtimeState->service_object_ptr, &outcome);
+            kronos_sync_mutex_unlock(currentTcb, (kronos_mutex_t *)runtimeState->service_object_ptr, &outcome);
             break;
 
         case KRONOS_SERVICE_SEMAPHORE_TAKE:
-            Kronos_SyncSemaphoreTake(currentTcb, (kronos_semaphore_t *)runtimeState->service_object_ptr, &outcome);
+            kronos_sync_semaphore_take(currentTcb, (kronos_semaphore_t *)runtimeState->service_object_ptr, &outcome);
             break;
 
         case KRONOS_SERVICE_SEMAPHORE_GIVE:
-            Kronos_SyncSemaphoreGive((kronos_semaphore_t *)runtimeState->service_object_ptr, &outcome);
+            kronos_sync_semaphore_give((kronos_semaphore_t *)runtimeState->service_object_ptr, &outcome);
             break;
 
         case KRONOS_SERVICE_INGRESS_RECEIVE:
@@ -401,20 +402,20 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
             }
             else
             {
-                Kronos_ChannelsIngressReceive(channelRequest->message_ptr, &outcome);
+                kronos_channels_ingress_receive(channelRequest->message_ptr, &outcome);
             }
             break;
 
         case KRONOS_SERVICE_INGRESS_WAIT:
-            Kronos_ChannelsIngressWait(&outcome);
+            kronos_channels_ingress_wait(&outcome);
             break;
 
         case KRONOS_SERVICE_EGRESS_SEND:
-            Kronos_ChannelsEgressSend(channelRequest, &outcome);
+            kronos_channels_egress_send(channelRequest, &outcome);
             break;
 
         case KRONOS_SERVICE_EGRESS_BROADCAST:
-            Kronos_ChannelsEgressBroadcast(channelRequest, &outcome);
+            kronos_channels_egress_broadcast(channelRequest, &outcome);
             break;
 
         case KRONOS_SERVICE_TASK_CREATE:
@@ -426,19 +427,19 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
         {
             int32_t taskIndex;
 
-            taskIndex = Kronos_TaskFindByName((const char *)runtimeState->service_object_ptr);
-            outcome.status = Kronos_TaskDeleteInternal((kronos_task_id_t)taskIndex);
+            taskIndex = kronos_task_find_by_name((const char *)runtimeState->service_object_ptr);
+            outcome.status = kronos_task_delete_internal((kronos_task_id_t)taskIndex);
             outcome.switch_required = ((outcome.status == KRONOS_STATUS_OK) && ((uint32_t)taskIndex == g_currentTask)) ? 1U : 0U;
             break;
         }
 
         case KRONOS_SERVICE_TASK_PAUSE:
-            outcome.status = Kronos_TaskPauseInternal((kronos_task_id_t)Kronos_TaskFindByName((const char *)runtimeState->service_object_ptr));
+            outcome.status = kronos_task_pause_internal((kronos_task_id_t)kronos_task_find_by_name((const char *)runtimeState->service_object_ptr));
             outcome.switch_required = 0U;
             break;
 
         case KRONOS_SERVICE_TASK_RESUME:
-            outcome.status = Kronos_TaskResumeInternal((kronos_task_id_t)Kronos_TaskFindByName((const char *)runtimeState->service_object_ptr));
+            outcome.status = kronos_task_resume_internal((kronos_task_id_t)kronos_task_find_by_name((const char *)runtimeState->service_object_ptr));
             outcome.switch_required = (outcome.status == KRONOS_STATUS_OK) ? 1U : 0U;
             break;
 
@@ -466,22 +467,22 @@ uint32_t *Kronos_CoreHandleSupervisorCall(uint32_t *savedStackPtr)
     return kronos_scheduler_keep_current_running(savedStackPtr);
 }
 
-uint32_t *Kronos_CoreSwitchTask(uint32_t *savedStackPtr)
+uint32_t *kronos_core_switch_task(uint32_t *savedStackPtr)
 {
     kronos_scheduler_store_current_context(savedStackPtr);
     return kronos_scheduler_switch_or_continue(savedStackPtr);
 }
 
-uint32_t *Kronos_CoreQuarantineCurrentTask(uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress)
+uint32_t *kronos_core_quarantine_current_task(uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress)
 {
     int32_t nextTaskIndex;
 
-    Kronos_TaskQuarantine(&g_tasks[g_currentTask], faultStackPtr, faultFlags, faultAddress);
+    kronos_task_quarantine(&g_tasks[g_currentTask], faultStackPtr, faultFlags, faultAddress);
 
     nextTaskIndex = kronos_scheduler_select_next_ready_task(g_currentTask);
     if (nextTaskIndex >= 0)
     {
-        Kronos_TaskActivate((uint32_t)nextTaskIndex);
+        kronos_task_activate((uint32_t)nextTaskIndex);
     }
 
     return g_tasks[g_currentTask].stack_top_ptr;
