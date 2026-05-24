@@ -174,9 +174,14 @@ extern uint32_t g_currentTask;
 
 void Kronos_Init(void);
 kronos_status_e Kronos_TaskCreate(void (*taskFunction)(void), uint32_t stackWords, const char *taskName);
+kronos_status_e Kronos_TaskCreateWithId(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, kronos_task_id_t *taskId);
+kronos_status_e Kronos_TaskGetIdByName(const char *taskName, kronos_task_id_t *taskId);
 kronos_status_e Kronos_TaskDelete(const char *taskName);
+kronos_status_e Kronos_TaskDeleteById(kronos_task_id_t taskId);
 kronos_status_e Kronos_TaskPause(const char *taskName);
+kronos_status_e Kronos_TaskPauseById(kronos_task_id_t taskId);
 kronos_status_e Kronos_TaskResume(const char *taskName);
+kronos_status_e Kronos_TaskResumeById(kronos_task_id_t taskId);
 kronos_status_e Kronos_DriverInit(kronos_driver_init_fn_t initFunction, void *context);
 kronos_status_e Kronos_IngressResolve(kronos_ingress_t *ingress, const char *taskName);
 kronos_status_e Kronos_EgressSend(const kronos_ingress_t *ingress, uint32_t messageId, const void *payloadPtr, uint32_t payloadSize);

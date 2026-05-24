@@ -52,7 +52,6 @@ static void kronos_scheduler_store_current_context(uint32_t *savedStackPtr);
 static uint32_t *kronos_scheduler_keep_current_running(uint32_t *savedStackPtr);
 static void kronos_scheduler_clear_service_state(kronos_task_runtime_t *runtimeState);
 static void kronos_scheduler_init_outcome(kronos_service_outcome_t *outcome);
-static int32_t kronos_scheduler_select_next_ready_task(uint32_t startTask);
 static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr);
 static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_request_t *request);
 static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init_request_t *request);
@@ -90,23 +89,6 @@ static void kronos_scheduler_init_outcome(kronos_service_outcome_t *outcome)
     }
 }
 
-static int32_t kronos_scheduler_select_next_ready_task(uint32_t startTask)
-{
-    int32_t nextTaskIndex;
-
-    nextTaskIndex = kronos_task_find_next_ready(TASK_KIND_APPLICATION, startTask);
-    if (nextTaskIndex < 0)
-    {
-        nextTaskIndex = kronos_task_find_next_ready(TASK_KIND_SYSTEM, startTask);
-    }
-    if (nextTaskIndex < 0)
-    {
-        nextTaskIndex = kronos_task_find_next_ready(TASK_KIND_IDLE, startTask);
-    }
-
-    return nextTaskIndex;
-}
-
 static uint32_t *kronos_scheduler_switch_or_continue(uint32_t *savedStackPtr)
 {
     if ((g_schedulerSuspendDepth != 0U) && (g_tasks[g_currentTask].task_state == TASK_STATE_RUNNING))
@@ -130,7 +112,7 @@ static kronos_status_e kronos_scheduler_create_task(const kronos_task_create_req
                                      request->stack_words,
                                      request->task_name,
                                      TASK_KIND_APPLICATION,
-                                     NULL);
+                                     request->task_id);
 }
 
 static kronos_status_e kronos_scheduler_run_driver_init(const kronos_driver_init_request_t *request)
@@ -175,13 +157,21 @@ void kronos_scheduler_request_service(kronos_service_e serviceRequest, void *ser
 
 void Kronos_Start(void)
 {
+    int32_t startTask;
+
     if (g_numTasks == 0U)
     {
         return;
     }
 
+    startTask = kronos_task_select_next_ready();
+    if (startTask < 0)
+    {
+        return;
+    }
+
     kronos_port_init_scheduler(TICK_FREQ_HZ);
-    kronos_task_activate(kronos_task_select_start_task());
+    kronos_task_activate((uint32_t)startTask);
     kronos_port_start_scheduler();
 
     for (;;)
@@ -258,26 +248,18 @@ static void kronos_scheduler_round_robin(void)
 
     if (g_tasks[g_currentTask].task_state == TASK_STATE_RUNNING)
     {
-        g_tasks[g_currentTask].task_state = TASK_STATE_READY;
+        kronos_task_make_ready(&g_tasks[g_currentTask]);
     }
 
-    nextTaskIndex = kronos_scheduler_select_next_ready_task(g_currentTask);
+    nextTaskIndex = kronos_task_select_next_ready();
     if (nextTaskIndex >= 0)
     {
         kronos_task_activate((uint32_t)nextTaskIndex);
-        return;
-    }
-
-    if (g_tasks[g_currentTask].task_state == TASK_STATE_READY)
-    {
-        kronos_task_activate(g_currentTask);
     }
 }
 
 void kronos_core_on_tick(void)
 {
-    uint32_t taskIndex;
-
     g_tickCount++;
 
     if (g_schedulerStarted == 0U)
@@ -285,21 +267,7 @@ void kronos_core_on_tick(void)
         return;
     }
 
-    for (taskIndex = 0U; taskIndex < g_numTasks; ++taskIndex)
-    {
-        if (g_tasks[taskIndex].task_state == TASK_STATE_TIME_DELAY)
-        {
-            if (g_tasks[taskIndex].remaining_delay > 0U)
-            {
-                g_tasks[taskIndex].remaining_delay--;
-            }
-
-            if (g_tasks[taskIndex].remaining_delay == 0U)
-            {
-                g_tasks[taskIndex].task_state = TASK_STATE_READY;
-            }
-        }
-    }
+    kronos_task_process_delay_tick(g_tickCount);
 
     if (g_schedulerSuspendDepth != 0U)
     {
@@ -346,8 +314,7 @@ uint32_t *kronos_core_handle_supervisor_call(uint32_t *savedStackPtr)
         case KRONOS_SERVICE_DELAY:
             if (serviceParameter > 0U)
             {
-                currentTcb->remaining_delay = serviceParameter;
-                currentTcb->task_state = TASK_STATE_TIME_DELAY;
+                kronos_task_delay_current(serviceParameter, g_tickCount);
             }
             kronos_scheduler_clear_service_state(runtimeState);
             runtimeState->service_result = KRONOS_STATUS_OK;
@@ -427,19 +394,19 @@ uint32_t *kronos_core_handle_supervisor_call(uint32_t *savedStackPtr)
         {
             int32_t taskIndex;
 
-            taskIndex = kronos_task_find_by_name((const char *)runtimeState->service_object_ptr);
+            taskIndex = (int32_t)serviceParameter;
             outcome.status = kronos_task_delete_internal((kronos_task_id_t)taskIndex);
             outcome.switch_required = ((outcome.status == KRONOS_STATUS_OK) && ((uint32_t)taskIndex == g_currentTask)) ? 1U : 0U;
             break;
         }
 
         case KRONOS_SERVICE_TASK_PAUSE:
-            outcome.status = kronos_task_pause_internal((kronos_task_id_t)kronos_task_find_by_name((const char *)runtimeState->service_object_ptr));
+            outcome.status = kronos_task_pause_internal((kronos_task_id_t)serviceParameter);
             outcome.switch_required = 0U;
             break;
 
         case KRONOS_SERVICE_TASK_RESUME:
-            outcome.status = kronos_task_resume_internal((kronos_task_id_t)kronos_task_find_by_name((const char *)runtimeState->service_object_ptr));
+            outcome.status = kronos_task_resume_internal((kronos_task_id_t)serviceParameter);
             outcome.switch_required = (outcome.status == KRONOS_STATUS_OK) ? 1U : 0U;
             break;
 
@@ -479,7 +446,7 @@ uint32_t *kronos_core_quarantine_current_task(uint32_t *faultStackPtr, uint32_t 
 
     kronos_task_quarantine(&g_tasks[g_currentTask], faultStackPtr, faultFlags, faultAddress);
 
-    nextTaskIndex = kronos_scheduler_select_next_ready_task(g_currentTask);
+    nextTaskIndex = kronos_task_select_next_ready();
     if (nextTaskIndex >= 0)
     {
         kronos_task_activate((uint32_t)nextTaskIndex);

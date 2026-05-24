@@ -50,19 +50,54 @@ void Kronos_Init(void)
 
 kronos_status_e Kronos_TaskCreate(void (*taskFunction)(void), uint32_t stackWords, const char *taskName)
 {
+    return Kronos_TaskCreateWithId(taskFunction, stackWords, taskName, NULL);
+}
+
+kronos_status_e Kronos_TaskCreateWithId(void (*taskFunction)(void), uint32_t stackWords, const char *taskName, kronos_task_id_t *taskId)
+{
     kronos_task_create_request_t request;
+
+    if (taskId != NULL)
+    {
+        *taskId = KRONOS_INVALID_TASK_ID;
+    }
 
     if (g_schedulerStarted == 0U)
     {
-        return kronos_task_create_internal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, NULL);
+        return kronos_task_create_internal(taskFunction, stackWords, taskName, TASK_KIND_APPLICATION, taskId);
     }
 
     request.task_function = taskFunction;
     request.task_name = taskName;
     request.stack_words = stackWords;
+    request.task_id = taskId;
 
     kronos_scheduler_request_service(KRONOS_SERVICE_TASK_CREATE, &request, 0U);
     return g_taskRuntime[g_currentTask].service_result;
+}
+
+kronos_status_e Kronos_TaskGetIdByName(const char *taskName, kronos_task_id_t *taskId)
+{
+    int32_t taskIndex;
+
+    if (taskId != NULL)
+    {
+        *taskId = KRONOS_INVALID_TASK_ID;
+    }
+
+    if ((taskName == NULL) || (taskName[0] == '\0') || (taskId == NULL))
+    {
+        return KRONOS_STATUS_INVALID_ARGUMENT;
+    }
+
+    taskIndex = kronos_task_find_by_name(taskName);
+    if (taskIndex < 0)
+    {
+        return KRONOS_STATUS_NOT_FOUND;
+    }
+
+    *taskId = (kronos_task_id_t)taskIndex;
+    return KRONOS_STATUS_OK;
 }
 
 const TCB_t *Kronos_GetTaskTable(void)

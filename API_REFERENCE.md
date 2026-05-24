@@ -40,6 +40,8 @@ Core behavior:
 - Initial tasks are usually created before the scheduler starts.
 - One idle task is created internally by `Kronos_Init()`.
 - The scheduler uses a 1 kHz tick by default.
+- Ready tasks are selected from fixed FIFO queues by task kind, so ready selection is bounded.
+- Delayed tasks are stored in wake-tick order, so the tick path checks only expired delay-list entries instead of scanning all tasks.
 - Task stacks are allocated from a fixed stack pool.
 - Each task has an ingress mailbox queue.
 - Messages are copied into fixed-size global mail slots.
@@ -149,7 +151,7 @@ Outputs: Creates one task control block and one stack slot.
 
 What it does: Creates an application task in the ready state.
 
-How it works: Before the scheduler starts, the task is created directly. After the scheduler starts, the request is handled through SVC in kernel context. KronOS validates the task, rounds the stack size to an even word count, allocates or reuses a port-sized stack slot, builds the initial exception frame, and places the task in `g_tasks`.
+How it works: Before the scheduler starts, the task is created directly. After the scheduler starts, the request is handled through SVC in kernel context. KronOS validates the task, rounds the stack size to an even word count, allocates or reuses a port-sized stack slot, builds the initial exception frame, places the task in `g_tasks`, and appends it to the ready queue for its task kind.
 
 Return values:
 
@@ -185,6 +187,58 @@ if (Kronos_TaskCreate(sensor_task, 96U, "sensor") != KRONOS_STATUS_OK)
     error_handler();
 }
 ```
+
+#### `Kronos_TaskCreateWithId`
+
+```c
+kronos_status_e Kronos_TaskCreateWithId(void (*taskFunction)(void),
+                                        uint32_t stackWords,
+                                        const char *taskName,
+                                        kronos_task_id_t *taskId);
+```
+
+Visibility: Public application API.
+
+What it does: Creates an application task and optionally returns its task ID.
+
+Use case: Prefer this over name-only creation when production code needs to control the task later without repeated name lookup.
+
+Return values: Same as `Kronos_TaskCreate()`. If `taskId` is non-null, it is set to `KRONOS_INVALID_TASK_ID` before validation and to the created task ID on success.
+
+Example:
+
+```c
+kronos_task_id_t worker_id;
+
+if (Kronos_TaskCreateWithId(worker_task, 96U, "worker", &worker_id) != KRONOS_STATUS_OK)
+{
+    error_handler();
+}
+```
+
+#### `Kronos_TaskGetIdByName`
+
+```c
+kronos_status_e Kronos_TaskGetIdByName(const char *taskName,
+                                       kronos_task_id_t *taskId);
+```
+
+Visibility: Public application API.
+
+What it does: Resolves a task name to a task ID.
+
+Notes:
+
+- Name lookup is linear over the active task table.
+- Resolve names during setup or diagnostics; use `ById` APIs in repeated runtime paths.
+
+Return values:
+
+| Return | Meaning |
+| --- | --- |
+| `KRONOS_STATUS_OK` | Task ID resolved. |
+| `KRONOS_STATUS_INVALID_ARGUMENT` | Null/empty name or null output pointer. |
+| `KRONOS_STATUS_NOT_FOUND` | No active task has that name. |
 
 #### `Kronos_TaskDelete`
 
@@ -228,6 +282,20 @@ if (Kronos_TaskDelete("sensor") != KRONOS_STATUS_OK)
     error_handler();
 }
 ```
+
+#### `Kronos_TaskDeleteById`
+
+```c
+kronos_status_e Kronos_TaskDeleteById(kronos_task_id_t taskId);
+```
+
+Visibility: Public application API.
+
+What it does: Deletes an application task by task ID.
+
+Use case: Production control paths that already have a task ID from `Kronos_TaskCreateWithId()` or `Kronos_TaskGetIdByName()`.
+
+Return values: Same deletion status values as `Kronos_TaskDelete()`, except lookup is by ID.
 
 #### `Kronos_Start`
 
@@ -281,7 +349,7 @@ Outputs: May block the current task until the delay expires.
 
 What it does: Delays the current task or yields when `ms == 0`.
 
-How it works: For a non-zero delay, KronOS requests the delay service. The scheduler stores the delay in `remaining_delay`, moves the task to `TASK_STATE_TIME_DELAY`, and selects another ready task. SysTick decrements the delay counter.
+How it works: For a non-zero delay, KronOS requests the delay service. The scheduler stores the delay in `remaining_delay`, moves the task to `TASK_STATE_TIME_DELAY`, inserts it into the ordered delay list, and selects another ready task. SysTick checks the delay-list head and wakes expired tasks without scanning the whole task table.
 
 Return values: None.
 
@@ -319,7 +387,7 @@ Outputs: Changes the named task state to `TASK_STATE_PAUSED`.
 
 What it does: Pauses another task.
 
-How it works: Before the scheduler starts, the task is paused directly. After the scheduler starts, the request is handled through SVC. KronOS resolves the task name, rejects the current task and idle task, then changes a ready or delayed task to paused.
+How it works: Before the scheduler starts, the task is paused directly. After the scheduler starts, the request is handled through SVC. KronOS resolves the task name, rejects the current task and idle task, removes a ready task from its ready queue or a delayed task from the delay list, then changes it to paused.
 
 Return values:
 
@@ -343,6 +411,18 @@ void stop_worker_temporarily(void)
 }
 ```
 
+#### `Kronos_TaskPauseById`
+
+```c
+kronos_status_e Kronos_TaskPauseById(kronos_task_id_t taskId);
+```
+
+Visibility: Public application API.
+
+What it does: Pauses another task by task ID.
+
+Return values: Same pause status values as `Kronos_TaskPause()`, except lookup is by ID.
+
 #### `Kronos_TaskResume`
 
 ```c
@@ -361,7 +441,7 @@ Outputs: Moves a paused task back to ready or delayed state.
 
 What it does: Resumes a paused task.
 
-How it works: Before the scheduler starts, the task is resumed directly. After the scheduler starts, the request is handled through SVC. KronOS resolves the task name and, if the paused task still has `remaining_delay > 0`, it returns to `TASK_STATE_TIME_DELAY`. Otherwise it becomes ready. If the scheduler is suspended, a pending switch is recorded.
+How it works: Before the scheduler starts, the task is resumed directly. After the scheduler starts, the request is handled through SVC. KronOS resolves the task name and, if the paused task still has `remaining_delay > 0`, it is reinserted into the delay list. Otherwise it becomes ready and is appended to its ready queue. If the scheduler is suspended, a pending switch is recorded.
 
 Return values:
 
@@ -376,6 +456,18 @@ Example:
 ```c
 (void)Kronos_TaskResume("worker");
 ```
+
+#### `Kronos_TaskResumeById`
+
+```c
+kronos_status_e Kronos_TaskResumeById(kronos_task_id_t taskId);
+```
+
+Visibility: Public application API.
+
+What it does: Resumes a paused task by task ID.
+
+Return values: Same resume status values as `Kronos_TaskResume()`, except lookup is by ID.
 
 ### Scheduler Control
 
@@ -1691,34 +1783,28 @@ Return values:
 | `>= 0` | Task index. |
 | `-1` | Null/empty name or not found. |
 
-#### `kronos_task_find_next_ready`
+#### `kronos_task_select_next_ready`
 
 ```c
-int32_t kronos_task_find_next_ready(task_kind_e taskKind,
-                                 uint32_t startTask);
+int32_t kronos_task_select_next_ready(void);
 ```
 
 Visibility: Internal task API.
 
-Inputs:
+Inputs: None.
 
-| Input | Description |
-| --- | --- |
-| `taskKind` | Kind to search for. |
-| `startTask` | Index to start after. |
+Outputs: Removes the selected task from its ready queue.
 
-Outputs: None.
+What it does: Selects the next ready task in bounded time.
 
-What it does: Finds the next ready task of a given kind.
-
-How it works: Wraps around the task table, checking one task per iteration.
+How it works: Checks the application, system, and idle ready queue heads in that fixed order and pops the first available task.
 
 Return values:
 
 | Return | Meaning |
 | ---: | --- |
-| `>= 0` | Next ready task index. |
-| `-1` | No ready task of that kind. |
+| `>= 0` | Selected task index. |
+| `-1` | No ready task is available. |
 
 #### `kronos_task_find_waiting`
 
@@ -1773,7 +1859,7 @@ Outputs: Sets runtime wait fields and task state.
 
 What it does: Blocks a task on an internal wait object.
 
-How it works: Computes the task index from the TCB pointer and updates `g_taskRuntime`.
+How it works: Computes the task index from the TCB pointer, removes the task from scheduler queues if needed, and updates `g_taskRuntime`.
 
 Return values: None.
 
@@ -1795,32 +1881,9 @@ Outputs: Clears wait fields and makes task ready.
 
 What it does: Wakes a waiting task.
 
-How it works: Clears `wait_reason` and `wait_object_ptr`, then sets `task_state` to `TASK_STATE_READY`.
+How it works: Clears `wait_reason` and `wait_object_ptr`, sets `task_state` to `TASK_STATE_READY`, and appends the task to its ready queue.
 
 Return values: None.
-
-#### `kronos_task_select_start_task`
-
-```c
-uint32_t kronos_task_select_start_task(void);
-```
-
-Visibility: Internal task API.
-
-Inputs: None.
-
-Outputs: None.
-
-What it does: Selects the initial task to run.
-
-How it works: Searches ready application tasks first, then system tasks, then idle tasks.
-
-Return values:
-
-| Return | Meaning |
-| ---: | --- |
-| Task index | First task to activate. |
-| `0` | Fallback if no ready task is found. |
 
 #### `kronos_task_activate`
 
@@ -1906,7 +1969,7 @@ Outputs: Increments tick count, updates delayed tasks, and may pend a context sw
 
 What it does: Handles one system tick.
 
-How it works: Increments `g_tickCount`, decrements `remaining_delay` for delayed tasks, moves expired tasks to ready, and pends PendSV unless scheduler switching is suspended.
+How it works: Increments `g_tickCount`, processes expired entries from the ordered delay-list head, moves expired tasks to ready queues, and pends PendSV unless scheduler switching is suspended.
 
 Return values: None.
 
@@ -2546,7 +2609,7 @@ Fields:
 | `stack_slot_end_ptr` | End of allocated stack slot. |
 | `task_state` | Current task state. |
 | `task_kind` | Application, system, or idle. |
-| `remaining_delay` | Delay ticks remaining for delayed tasks. |
+| `remaining_delay` | Delay ticks stored for delayed or paused-delayed tasks. Active delay ordering is maintained by the internal wake-tick list. |
 | `task_fn` | Original task entry function. |
 | `task_name` | Task name string. |
 | `requested_stack_words` | Usable stack words requested after defaulting/rounding. |
@@ -2735,7 +2798,7 @@ Fields:
 | `TASK_STATE_READY` | Task can be scheduled. |
 | `TASK_STATE_RUNNING` | Task is currently running. |
 | `TASK_STATE_PAUSED` | Task is paused by API. |
-| `TASK_STATE_TIME_DELAY` | Task is delayed until `remaining_delay` reaches zero. |
+| `TASK_STATE_TIME_DELAY` | Task is delayed until its internal wake tick expires. |
 | `TASK_STATE_WAITING` | Task is blocked on mutex, semaphore, or ingress. |
 | `TASK_STATE_DELETING` | Reserved delete state. |
 | `TASK_STATE_STOPPED` | Task function returned and task stopped. |

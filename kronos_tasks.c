@@ -41,6 +41,8 @@ a separate license is required. Contact:
 ******************************************************************************/
 
 #define KRONOS_STACK_FILL_BYTE 0xCCU
+#define KRONOS_TASK_QUEUE_NONE UINT32_MAX
+#define KRONOS_TASK_KIND_COUNT 3U
 
 /******************************************************************************
 * Enumerations, Structures & Variables
@@ -54,6 +56,15 @@ kronos_task_runtime_t g_taskRuntime[MAX_TASKS];
 uint32_t g_stackPoolWordsUsed = 0U;
 
 static uint32_t g_taskStackPool[STACK_POOL_SIZE_WORDS] KRONOS_PORT_STACK_POOL_SECTION;
+static uint32_t g_readyHead[KRONOS_TASK_KIND_COUNT];
+static uint32_t g_readyTail[KRONOS_TASK_KIND_COUNT];
+static uint32_t g_readyNext[MAX_TASKS];
+static uint32_t g_readyPrev[MAX_TASKS];
+static uint32_t g_readyMember[MAX_TASKS];
+static uint32_t g_delayHead = KRONOS_TASK_QUEUE_NONE;
+static uint32_t g_delayNext[MAX_TASKS];
+static uint32_t g_delayMember[MAX_TASKS];
+static uint32_t g_delayWakeTick[MAX_TASKS];
 
 /******************************************************************************
 * Declaration | Static Functions
@@ -71,6 +82,14 @@ static uint32_t kronos_task_has_name(const TCB_t *tcb);
 static uint32_t kronos_task_is_reusable(const TCB_t *tcb);
 static int32_t kronos_task_find_slot(uint32_t requestedSlotWords, uint32_t *reuseExistingStack);
 static void kronos_task_clear_runtime(uint32_t taskIndex);
+static uint32_t kronos_task_kind_to_queue(task_kind_e taskKind);
+static uint32_t kronos_task_tick_reached(uint32_t currentTick, uint32_t targetTick);
+static void kronos_task_reset_scheduler_lists(void);
+static void kronos_task_ready_insert(kronos_task_id_t taskId);
+static void kronos_task_ready_remove(kronos_task_id_t taskId);
+static int32_t kronos_task_ready_pop(uint32_t queueIndex);
+static void kronos_task_delay_remove(kronos_task_id_t taskId, uint32_t updateRemaining, uint32_t currentTick);
+static void kronos_task_delay_insert(kronos_task_id_t taskId, uint32_t delayTicks, uint32_t currentTick);
 
 /******************************************************************************
 * Definition | Static Functions
@@ -254,6 +273,213 @@ static void kronos_task_clear_runtime(uint32_t taskIndex)
     g_taskRuntime[taskIndex].service_request = KRONOS_SERVICE_NONE;
 }
 
+static uint32_t kronos_task_kind_to_queue(task_kind_e taskKind)
+{
+    if ((uint32_t)taskKind >= KRONOS_TASK_KIND_COUNT)
+    {
+        return KRONOS_TASK_KIND_COUNT;
+    }
+
+    return (uint32_t)taskKind;
+}
+
+static uint32_t kronos_task_tick_reached(uint32_t currentTick, uint32_t targetTick)
+{
+    return (((int32_t)(currentTick - targetTick)) >= 0) ? 1U : 0U;
+}
+
+static void kronos_task_reset_scheduler_lists(void)
+{
+    uint32_t index;
+
+    for (index = 0U; index < KRONOS_TASK_KIND_COUNT; ++index)
+    {
+        g_readyHead[index] = KRONOS_TASK_QUEUE_NONE;
+        g_readyTail[index] = KRONOS_TASK_QUEUE_NONE;
+    }
+
+    for (index = 0U; index < MAX_TASKS; ++index)
+    {
+        g_readyNext[index] = KRONOS_TASK_QUEUE_NONE;
+        g_readyPrev[index] = KRONOS_TASK_QUEUE_NONE;
+        g_readyMember[index] = 0U;
+        g_delayNext[index] = KRONOS_TASK_QUEUE_NONE;
+        g_delayMember[index] = 0U;
+        g_delayWakeTick[index] = 0U;
+    }
+
+    g_delayHead = KRONOS_TASK_QUEUE_NONE;
+}
+
+static void kronos_task_ready_insert(kronos_task_id_t taskId)
+{
+    uint32_t queueIndex;
+
+    if ((taskId >= g_numTasks) || (g_readyMember[taskId] != 0U))
+    {
+        return;
+    }
+
+    queueIndex = kronos_task_kind_to_queue(g_tasks[taskId].task_kind);
+    if (queueIndex >= KRONOS_TASK_KIND_COUNT)
+    {
+        return;
+    }
+
+    g_readyNext[taskId] = KRONOS_TASK_QUEUE_NONE;
+    g_readyPrev[taskId] = g_readyTail[queueIndex];
+    if (g_readyTail[queueIndex] != KRONOS_TASK_QUEUE_NONE)
+    {
+        g_readyNext[g_readyTail[queueIndex]] = taskId;
+    }
+    else
+    {
+        g_readyHead[queueIndex] = taskId;
+    }
+
+    g_readyTail[queueIndex] = taskId;
+    g_readyMember[taskId] = 1U;
+}
+
+static void kronos_task_ready_remove(kronos_task_id_t taskId)
+{
+    uint32_t queueIndex;
+    uint32_t nextTask;
+    uint32_t previousTask;
+
+    if ((taskId >= MAX_TASKS) || (g_readyMember[taskId] == 0U))
+    {
+        return;
+    }
+
+    queueIndex = kronos_task_kind_to_queue(g_tasks[taskId].task_kind);
+    nextTask = g_readyNext[taskId];
+    previousTask = g_readyPrev[taskId];
+
+    if (previousTask != KRONOS_TASK_QUEUE_NONE)
+    {
+        g_readyNext[previousTask] = nextTask;
+    }
+    else if (queueIndex < KRONOS_TASK_KIND_COUNT)
+    {
+        g_readyHead[queueIndex] = nextTask;
+    }
+
+    if (nextTask != KRONOS_TASK_QUEUE_NONE)
+    {
+        g_readyPrev[nextTask] = previousTask;
+    }
+    else if (queueIndex < KRONOS_TASK_KIND_COUNT)
+    {
+        g_readyTail[queueIndex] = previousTask;
+    }
+
+    g_readyNext[taskId] = KRONOS_TASK_QUEUE_NONE;
+    g_readyPrev[taskId] = KRONOS_TASK_QUEUE_NONE;
+    g_readyMember[taskId] = 0U;
+}
+
+static int32_t kronos_task_ready_pop(uint32_t queueIndex)
+{
+    uint32_t taskId;
+
+    if ((queueIndex >= KRONOS_TASK_KIND_COUNT) || (g_readyHead[queueIndex] == KRONOS_TASK_QUEUE_NONE))
+    {
+        return -1;
+    }
+
+    taskId = g_readyHead[queueIndex];
+    kronos_task_ready_remove((kronos_task_id_t)taskId);
+    return (int32_t)taskId;
+}
+
+static void kronos_task_delay_remove(kronos_task_id_t taskId, uint32_t updateRemaining, uint32_t currentTick)
+{
+    uint32_t previousTask;
+    uint32_t currentTask;
+
+    if ((taskId >= MAX_TASKS) || (g_delayMember[taskId] == 0U))
+    {
+        return;
+    }
+
+    if (updateRemaining != 0U)
+    {
+        if (kronos_task_tick_reached(currentTick, g_delayWakeTick[taskId]) != 0U)
+        {
+            g_tasks[taskId].remaining_delay = 0U;
+        }
+        else
+        {
+            g_tasks[taskId].remaining_delay = g_delayWakeTick[taskId] - currentTick;
+        }
+    }
+
+    previousTask = KRONOS_TASK_QUEUE_NONE;
+    currentTask = g_delayHead;
+    while (currentTask != KRONOS_TASK_QUEUE_NONE)
+    {
+        if (currentTask == taskId)
+        {
+            if (previousTask == KRONOS_TASK_QUEUE_NONE)
+            {
+                g_delayHead = g_delayNext[currentTask];
+            }
+            else
+            {
+                g_delayNext[previousTask] = g_delayNext[currentTask];
+            }
+            break;
+        }
+
+        previousTask = currentTask;
+        currentTask = g_delayNext[currentTask];
+    }
+
+    g_delayNext[taskId] = KRONOS_TASK_QUEUE_NONE;
+    g_delayMember[taskId] = 0U;
+    g_delayWakeTick[taskId] = 0U;
+}
+
+static void kronos_task_delay_insert(kronos_task_id_t taskId, uint32_t delayTicks, uint32_t currentTick)
+{
+    uint32_t previousTask;
+    uint32_t currentTask;
+    uint32_t wakeTick;
+
+    if ((taskId >= g_numTasks) || (delayTicks == 0U))
+    {
+        return;
+    }
+
+    kronos_task_ready_remove(taskId);
+    kronos_task_delay_remove(taskId, 0U, currentTick);
+
+    wakeTick = currentTick + delayTicks;
+    g_delayWakeTick[taskId] = wakeTick;
+    g_delayMember[taskId] = 1U;
+    g_delayNext[taskId] = KRONOS_TASK_QUEUE_NONE;
+
+    previousTask = KRONOS_TASK_QUEUE_NONE;
+    currentTask = g_delayHead;
+    while ((currentTask != KRONOS_TASK_QUEUE_NONE) &&
+           (kronos_task_tick_reached(g_delayWakeTick[currentTask], wakeTick) == 0U))
+    {
+        previousTask = currentTask;
+        currentTask = g_delayNext[currentTask];
+    }
+
+    g_delayNext[taskId] = currentTask;
+    if (previousTask == KRONOS_TASK_QUEUE_NONE)
+    {
+        g_delayHead = taskId;
+    }
+    else
+    {
+        g_delayNext[previousTask] = taskId;
+    }
+}
+
 /******************************************************************************
 * Definition | Public Functions
 ******************************************************************************/
@@ -267,6 +493,7 @@ void kronos_tasks_reset_state(void)
     g_numTasks = 0U;
     g_currentTask = 0U;
     g_stackPoolWordsUsed = 0U;
+    kronos_task_reset_scheduler_lists();
 
     (void)kronos_task_create_internal(kronos_idle_task, IDLE_TASK_STACK_SIZE_WORDS, "kronos_idle", TASK_KIND_IDLE, &idleTaskId);
 }
@@ -376,6 +603,8 @@ kronos_status_e kronos_task_create_internal(void (*taskFunction)(void), uint32_t
         g_numTasks++;
     }
 
+    kronos_task_ready_insert((kronos_task_id_t)taskIndex);
+
     if (taskId != NULL)
     {
         *taskId = (kronos_task_id_t)taskIndex;
@@ -386,72 +615,75 @@ kronos_status_e kronos_task_create_internal(void (*taskFunction)(void), uint32_t
 kronos_status_e Kronos_TaskDelete(const char *taskName)
 {
     kronos_task_id_t taskId;
+    kronos_status_e status;
 
-    if ((taskName == NULL) || (taskName[0] == '\0'))
+    status = Kronos_TaskGetIdByName(taskName, &taskId);
+    if (status != KRONOS_STATUS_OK)
     {
-        return KRONOS_STATUS_INVALID_ARGUMENT;
+        return status;
     }
 
-    taskId = (kronos_task_id_t)kronos_task_find_by_name(taskName);
-    if (taskId == KRONOS_INVALID_TASK_ID)
-    {
-        return KRONOS_STATUS_NOT_FOUND;
-    }
+    return Kronos_TaskDeleteById(taskId);
+}
 
+kronos_status_e Kronos_TaskDeleteById(kronos_task_id_t taskId)
+{
     if (g_schedulerStarted == 0U)
     {
         return kronos_task_delete_internal(taskId);
     }
 
-    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_DELETE, (void *)taskName, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_DELETE, NULL, taskId);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
 kronos_status_e Kronos_TaskPause(const char *taskName)
 {
     kronos_task_id_t taskId;
+    kronos_status_e status;
 
-    if ((taskName == NULL) || (taskName[0] == '\0'))
+    status = Kronos_TaskGetIdByName(taskName, &taskId);
+    if (status != KRONOS_STATUS_OK)
     {
-        return KRONOS_STATUS_INVALID_ARGUMENT;
+        return status;
     }
 
-    taskId = (kronos_task_id_t)kronos_task_find_by_name(taskName);
-    if (taskId == KRONOS_INVALID_TASK_ID)
-    {
-        return KRONOS_STATUS_NOT_FOUND;
-    }
+    return Kronos_TaskPauseById(taskId);
+}
 
+kronos_status_e Kronos_TaskPauseById(kronos_task_id_t taskId)
+{
     if (g_schedulerStarted == 0U)
     {
         return kronos_task_pause_internal(taskId);
     }
 
-    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_PAUSE, (void *)taskName, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_PAUSE, NULL, taskId);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
 kronos_status_e Kronos_TaskResume(const char *taskName)
 {
     kronos_task_id_t taskId;
+    kronos_status_e status;
 
-    if ((taskName == NULL) || (taskName[0] == '\0'))
+    status = Kronos_TaskGetIdByName(taskName, &taskId);
+    if (status != KRONOS_STATUS_OK)
     {
-        return KRONOS_STATUS_INVALID_ARGUMENT;
+        return status;
     }
 
-    taskId = (kronos_task_id_t)kronos_task_find_by_name(taskName);
-    if (taskId == KRONOS_INVALID_TASK_ID)
-    {
-        return KRONOS_STATUS_NOT_FOUND;
-    }
+    return Kronos_TaskResumeById(taskId);
+}
 
+kronos_status_e Kronos_TaskResumeById(kronos_task_id_t taskId)
+{
     if (g_schedulerStarted == 0U)
     {
         return kronos_task_resume_internal(taskId);
     }
 
-    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_RESUME, (void *)taskName, 0U);
+    kronos_scheduler_request_service(KRONOS_SERVICE_TASK_RESUME, NULL, taskId);
     return g_taskRuntime[g_currentTask].service_result;
 }
 
@@ -476,6 +708,9 @@ kronos_status_e kronos_task_delete_internal(kronos_task_id_t taskId)
     {
         return KRONOS_STATUS_NOT_FOUND;
     }
+
+    kronos_task_ready_remove(taskId);
+    kronos_task_delay_remove(taskId, 0U, g_tickCount);
 
     tcb->task_state = TASK_STATE_DELETING;
     tcb->remaining_delay = 0U;
@@ -518,6 +753,15 @@ kronos_status_e kronos_task_pause_internal(kronos_task_id_t taskId)
         return KRONOS_STATUS_INVALID_STATE;
     }
 
+    if (g_tasks[taskId].task_state == TASK_STATE_READY)
+    {
+        kronos_task_ready_remove(taskId);
+    }
+    else
+    {
+        kronos_task_delay_remove(taskId, 1U, g_tickCount);
+    }
+
     g_tasks[taskId].task_state = TASK_STATE_PAUSED;
     return KRONOS_STATUS_OK;
 }
@@ -537,10 +781,11 @@ kronos_status_e kronos_task_resume_internal(kronos_task_id_t taskId)
     if (g_tasks[taskId].remaining_delay > 0U)
     {
         g_tasks[taskId].task_state = TASK_STATE_TIME_DELAY;
+        kronos_task_delay_insert(taskId, g_tasks[taskId].remaining_delay, g_tickCount);
     }
     else
     {
-        g_tasks[taskId].task_state = TASK_STATE_READY;
+        kronos_task_make_ready(&g_tasks[taskId]);
         if (g_schedulerSuspendDepth != 0U)
         {
             g_schedulerSwitchPending = 1U;
@@ -620,6 +865,8 @@ void kronos_task_quarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultF
     tcb->fault_flags |= normalizedFaultFlags;
     tcb->fault_address = faultAddress;
     tcb->remaining_delay = 0U;
+    kronos_task_ready_remove((kronos_task_id_t)taskIndex);
+    kronos_task_delay_remove((kronos_task_id_t)taskIndex, 0U, g_tickCount);
     runtimeState->wait_reason = KRONOS_WAIT_NONE;
     runtimeState->wait_object_ptr = NULL;
     runtimeState->service_request = KRONOS_SERVICE_NONE;
@@ -650,27 +897,6 @@ void kronos_task_quarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultF
 
     kronos_channels_cleanup_task((kronos_task_id_t)taskIndex);
     kronos_sync_cleanup_task((kronos_task_id_t)taskIndex);
-}
-
-int32_t kronos_task_find_next_ready(task_kind_e taskKind, uint32_t startTask)
-{
-    uint32_t candidateTask;
-    uint32_t searchedTasks;
-
-    candidateTask = startTask;
-
-    for (searchedTasks = 0U; searchedTasks < g_numTasks; ++searchedTasks)
-    {
-        candidateTask = (candidateTask + 1U) % g_numTasks;
-
-        if ((g_tasks[candidateTask].task_state == TASK_STATE_READY) &&
-            (g_tasks[candidateTask].task_kind == taskKind))
-        {
-            return (int32_t)candidateTask;
-        }
-    }
-
-    return -1;
 }
 
 int32_t kronos_task_find_by_name(const char *taskName)
@@ -719,63 +945,109 @@ int32_t kronos_task_find_waiting(kronos_wait_reason_e waitReason, const void *wa
 void kronos_task_block(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObject)
 {
     kronos_task_runtime_t *runtimeState;
+    uint32_t taskIndex;
 
     if (tcb == NULL)
     {
         return;
     }
 
-    runtimeState = &g_taskRuntime[kronos_task_get_index(tcb)];
+    taskIndex = kronos_task_get_index(tcb);
+    kronos_task_ready_remove((kronos_task_id_t)taskIndex);
+    kronos_task_delay_remove((kronos_task_id_t)taskIndex, 0U, g_tickCount);
+
+    runtimeState = &g_taskRuntime[taskIndex];
     runtimeState->wait_reason = waitReason;
     runtimeState->wait_object_ptr = waitObject;
     tcb->task_state = TASK_STATE_WAITING;
 }
 
-void kronos_task_unblock(TCB_t *tcb)
+void kronos_task_make_ready(TCB_t *tcb)
 {
-    kronos_task_runtime_t *runtimeState;
+    uint32_t taskIndex;
 
     if (tcb == NULL)
     {
         return;
     }
 
-    runtimeState = &g_taskRuntime[kronos_task_get_index(tcb)];
-    runtimeState->wait_reason = KRONOS_WAIT_NONE;
-    runtimeState->wait_object_ptr = NULL;
+    taskIndex = kronos_task_get_index(tcb);
+    kronos_task_delay_remove((kronos_task_id_t)taskIndex, 0U, g_tickCount);
+    tcb->remaining_delay = 0U;
     tcb->task_state = TASK_STATE_READY;
+    kronos_task_ready_insert((kronos_task_id_t)taskIndex);
 }
 
-uint32_t kronos_task_select_start_task(void)
+void kronos_task_unblock(TCB_t *tcb)
+{
+    kronos_task_runtime_t *runtimeState;
+    uint32_t taskIndex;
+
+    if (tcb == NULL)
+    {
+        return;
+    }
+
+    taskIndex = kronos_task_get_index(tcb);
+    runtimeState = &g_taskRuntime[taskIndex];
+    runtimeState->wait_reason = KRONOS_WAIT_NONE;
+    runtimeState->wait_object_ptr = NULL;
+    kronos_task_make_ready(tcb);
+}
+
+int32_t kronos_task_select_next_ready(void)
 {
     int32_t taskIndex;
 
-    taskIndex = kronos_task_find_next_ready(TASK_KIND_APPLICATION, g_numTasks - 1U);
+    taskIndex = kronos_task_ready_pop((uint32_t)TASK_KIND_APPLICATION);
     if (taskIndex >= 0)
     {
-        return (uint32_t)taskIndex;
+        return taskIndex;
     }
 
-    taskIndex = kronos_task_find_next_ready(TASK_KIND_SYSTEM, g_numTasks - 1U);
+    taskIndex = kronos_task_ready_pop((uint32_t)TASK_KIND_SYSTEM);
     if (taskIndex >= 0)
     {
-        return (uint32_t)taskIndex;
+        return taskIndex;
     }
 
-    taskIndex = kronos_task_find_next_ready(TASK_KIND_IDLE, g_numTasks - 1U);
-    if (taskIndex >= 0)
-    {
-        return (uint32_t)taskIndex;
-    }
-
-    return 0U;
+    return kronos_task_ready_pop((uint32_t)TASK_KIND_IDLE);
 }
 
 void kronos_task_activate(uint32_t taskIndex)
 {
+    kronos_task_ready_remove((kronos_task_id_t)taskIndex);
     g_currentTask = taskIndex;
     g_tasks[g_currentTask].task_state = TASK_STATE_RUNNING;
     kronos_port_configure_task_stack_region(g_tasks[g_currentTask].stack_slot_start_ptr, g_tasks[g_currentTask].stack_slot_words);
+}
+
+void kronos_task_delay_current(uint32_t delayTicks, uint32_t currentTick)
+{
+    if ((g_currentTask >= g_numTasks) || (delayTicks == 0U))
+    {
+        return;
+    }
+
+    g_tasks[g_currentTask].remaining_delay = delayTicks;
+    g_tasks[g_currentTask].task_state = TASK_STATE_TIME_DELAY;
+    kronos_task_delay_insert((kronos_task_id_t)g_currentTask, delayTicks, currentTick);
+}
+
+void kronos_task_process_delay_tick(uint32_t currentTick)
+{
+    uint32_t taskId;
+
+    while ((g_delayHead != KRONOS_TASK_QUEUE_NONE) &&
+           (kronos_task_tick_reached(currentTick, g_delayWakeTick[g_delayHead]) != 0U))
+    {
+        taskId = g_delayHead;
+        kronos_task_delay_remove((kronos_task_id_t)taskId, 0U, currentTick);
+        if (g_tasks[taskId].task_state == TASK_STATE_TIME_DELAY)
+        {
+            kronos_task_make_ready(&g_tasks[taskId]);
+        }
+    }
 }
 
 void kronos_task_update_all_stats(void)

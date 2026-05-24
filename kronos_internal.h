@@ -89,6 +89,7 @@ typedef struct
 	void (*task_function)(void);
 	const char *task_name;
 	uint32_t stack_words;
+	kronos_task_id_t *task_id;
 } kronos_task_create_request_t;
 
 typedef struct
@@ -133,16 +134,18 @@ kronos_status_e kronos_task_create_internal(void (*taskFunction)(void), uint32_t
 kronos_status_e kronos_task_delete_internal(kronos_task_id_t taskId);
 kronos_status_e kronos_task_pause_internal(kronos_task_id_t taskId);
 kronos_status_e kronos_task_resume_internal(kronos_task_id_t taskId);
+void kronos_task_delay_current(uint32_t delayTicks, uint32_t currentTick);
+void kronos_task_process_delay_tick(uint32_t currentTick);
 void kronos_task_update_all_stats(void);
 void kronos_task_update_stack_metrics(TCB_t *tcb, const uint32_t *stackPtr);
 kronos_stack_check_e kronos_task_check_stack(TCB_t *tcb, const uint32_t *stackPtr);
 void kronos_task_quarantine(TCB_t *tcb, uint32_t *faultStackPtr, uint32_t faultFlags, uint32_t faultAddress);
 int32_t kronos_task_find_by_name(const char *taskName);
-int32_t kronos_task_find_next_ready(task_kind_e taskKind, uint32_t startTask);
 int32_t kronos_task_find_waiting(kronos_wait_reason_e waitReason, const void *waitObject, uint32_t startTask);
 void kronos_task_block(TCB_t *tcb, kronos_wait_reason_e waitReason, void *waitObject);
+void kronos_task_make_ready(TCB_t *tcb);
 void kronos_task_unblock(TCB_t *tcb);
-uint32_t kronos_task_select_start_task(void);
+int32_t kronos_task_select_next_ready(void);
 void kronos_task_activate(uint32_t taskIndex);
 
 void kronos_channels_reset_state(void);

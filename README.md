@@ -16,6 +16,8 @@ The current sample project targets the NUCLEO-L476RG and blinks the onboard LED 
 KronOS is intentionally small, but it already includes the main kernel services needed for simple embedded applications:
 
 - fixed round-robin scheduling
+- bounded ready-task selection using per-kind ready queues
+- tick handling based on an ordered delay list instead of scanning every task
 - one internal idle task
 - per-task stack sizing at task creation
 - task creation while the scheduler is running
@@ -43,11 +45,16 @@ Task control:
 
 - `Kronos_Init()`
 - `Kronos_TaskCreate()`
+- `Kronos_TaskCreateWithId()`
+- `Kronos_TaskGetIdByName()`
 - `Kronos_TaskDelete()`
+- `Kronos_TaskDeleteById()`
 - `Kronos_Start()`
 - `Kronos_Delay()`
 - `Kronos_TaskPause()`
+- `Kronos_TaskPauseById()`
 - `Kronos_TaskResume()`
+- `Kronos_TaskResumeById()`
 - `Kronos_DriverInit()`
 - `Kronos_GetTaskTable()`
 - `Kronos_GetTaskCount()`
@@ -127,7 +134,16 @@ Notes:
 - `stackWords` is in 32-bit words, not bytes.
 - `64U` means 64 words, which is 256 bytes.
 - `Kronos_TaskCreate()` returns a status code only.
-- Task control APIs use task names, not task IDs.
+- Name-based task control APIs are convenient for setup and diagnostics.
+- ID-based task control APIs avoid repeated name lookup in production paths.
+
+## Scheduler Determinism
+
+KronOS keeps runnable tasks in fixed FIFO ready queues grouped by task kind: application, system, and idle. Selecting the next task checks those queue heads in a fixed order, so ready-task selection is bounded and does not scan the task table.
+
+Delayed tasks are kept in wake-tick order. `SysTick_Handler()` increments the global tick and only checks the head of the delay list, waking expired tasks until the first non-expired task is found. The tick path no longer loops through every task just to maintain delays.
+
+Task name lookup is still a linear search, so production code should resolve names once with `Kronos_TaskGetIdByName()` or create tasks with `Kronos_TaskCreateWithId()`, then use the `ById` APIs in repeated control paths.
 
 ## Simple mailbox example
 
